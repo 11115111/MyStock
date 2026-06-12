@@ -1,8 +1,8 @@
 sanxianhong:
   strict:
     rps50_min: 90
-    rps120_min: 93
-    rps250_min: 95
+    rps120_min: 93.1
+    rps250_min: 95.1
     hhv_period: 150
     hhv_ratio_min: 0.85
   loose:

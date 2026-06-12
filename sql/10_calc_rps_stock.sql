@@ -34,12 +34,12 @@ WITH returns AS (
 ranked AS (
     SELECT
         r.*,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_5d   NULLS FIRST) * 100) AS rps5,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_10d  NULLS FIRST) * 100) AS rps10,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_20d  NULLS FIRST) * 100) AS rps20,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_50d  NULLS FIRST) * 100) AS rps50,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_120d NULLS FIRST) * 100) AS rps120,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_250d NULLS FIRST) * 100) AS rps250
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_5d   NULLS FIRST) * 100 AS rps5,   -- 去掉 floor()
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_10d  NULLS FIRST) * 100 AS rps10,  -- 去掉 floor()
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_20d  NULLS FIRST) * 100 AS rps20,  -- 去掉 floor()
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_50d  NULLS FIRST) * 100 AS rps50,  -- 去掉 floor()
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_120d NULLS FIRST) * 100 AS rps120, -- 去掉 floor()
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_250d NULLS FIRST) * 100 AS rps250  -- 去掉 floor()
     FROM returns r
     WHERE r.pct_5d IS NOT NULL
 )

@@ -93,11 +93,11 @@ WITH block_returns AS (
 ranked AS (
     SELECT
         r.*,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_5d  NULLS FIRST) * 100) AS bkrps5,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100) AS bkrps10,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100) AS bkrps15,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100) AS bkrps20,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100) AS bkrps50
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_5d  NULLS FIRST) * 100 AS bkrps5,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100 AS bkrps10,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100 AS bkrps15,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps20,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps50
     FROM block_returns r
     WHERE r.trade_date = $target_date
 )
@@ -132,11 +132,11 @@ WITH block_returns AS (
 ranked AS (
     SELECT
         r.*,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_5d  NULLS FIRST) * 100) AS bkrps5,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100) AS bkrps10,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100) AS bkrps15,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100) AS bkrps20,
-        floor(PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100) AS bkrps50
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_5d  NULLS FIRST) * 100 AS bkrps5,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100 AS bkrps10,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100 AS bkrps15,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps20,
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps50
     FROM block_returns r
     WHERE r.trade_date BETWEEN $start_date AND $end_date
 )
@@ -179,33 +179,27 @@ WITH returns AS (
 ranked AS (
     SELECT
         r.*,
-        -- rps5: all rows here have pct_5d non-NULL (filtered above), plain rank
-        floor(PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_5d) * 100
-            )                                                        AS rps5,
-        -- rps10..rps250: rank only within stocks that have valid data for that
-        -- period; stocks with shorter history get NULL, not a deflated score.
-        -- PARTITION BY (pct IS NOT NULL) splits NULL/non-NULL into separate
-        -- buckets so NULL rows don't dilute the non-NULL ranking population.
+        PERCENT_RANK() OVER (PARTITION BY r.date ORDER BY r.pct_5d) * 100 AS rps5,
         CASE WHEN r.pct_10d  IS NOT NULL
-             THEN floor(PERCENT_RANK() OVER (
+             THEN PERCENT_RANK() OVER (
                       PARTITION BY r.date, (r.pct_10d  IS NOT NULL)
-                      ORDER BY r.pct_10d ) * 100) END               AS rps10,
+                      ORDER BY r.pct_10d ) * 100 END               AS rps10,
         CASE WHEN r.pct_20d  IS NOT NULL
-             THEN floor(PERCENT_RANK() OVER (
+             THEN PERCENT_RANK() OVER (
                       PARTITION BY r.date, (r.pct_20d  IS NOT NULL)
-                      ORDER BY r.pct_20d ) * 100) END               AS rps20,
+                      ORDER BY r.pct_20d ) * 100 END               AS rps20,
         CASE WHEN r.pct_50d  IS NOT NULL
-             THEN floor(PERCENT_RANK() OVER (
+             THEN PERCENT_RANK() OVER (
                       PARTITION BY r.date, (r.pct_50d  IS NOT NULL)
-                      ORDER BY r.pct_50d ) * 100) END               AS rps50,
+                      ORDER BY r.pct_50d ) * 100 END               AS rps50,
         CASE WHEN r.pct_120d IS NOT NULL
-             THEN floor(PERCENT_RANK() OVER (
+             THEN PERCENT_RANK() OVER (
                       PARTITION BY r.date, (r.pct_120d IS NOT NULL)
-                      ORDER BY r.pct_120d) * 100) END               AS rps120,
+                      ORDER BY r.pct_120d) * 100 END               AS rps120,
         CASE WHEN r.pct_250d IS NOT NULL
-             THEN floor(PERCENT_RANK() OVER (
+             THEN PERCENT_RANK() OVER (
                       PARTITION BY r.date, (r.pct_250d IS NOT NULL)
-                      ORDER BY r.pct_250d) * 100) END               AS rps250
+                      ORDER BY r.pct_250d) * 100 END               AS rps250
     FROM returns r
     WHERE r.pct_5d IS NOT NULL
       AND {date_filter}

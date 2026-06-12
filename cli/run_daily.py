@@ -20,8 +20,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from rps.core.db import get_connection, init_tables, refresh_block_member_count, refresh_stock_pool
-from rps.core.rps_calculator import (
+from core.db import get_connection, init_tables, refresh_block_member_count, refresh_stock_pool
+from core.rps_calculator import (
     calc_block_daily_pct,
     calc_block_daily_pct_history,
     calc_stock_rps,
@@ -29,7 +29,7 @@ from rps.core.rps_calculator import (
     calc_block_rps,
     calc_block_rps_history,
 )
-from rps.core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
+from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
 
 _DEFAULT_CFG = Path(__file__).parent.parent / "config" / "thresholds.yaml"
 

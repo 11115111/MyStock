@@ -8,13 +8,13 @@ import duckdb
 import pandas as pd
 import pytest
 
-from rps.core.db import init_tables, refresh_block_member_count, refresh_stock_pool
-from rps.core.rps_calculator import (
+from core.db import init_tables, refresh_block_member_count, refresh_stock_pool
+from core.rps_calculator import (
     calc_block_daily_pct,
     calc_stock_rps,
     calc_block_rps,
 )
-from rps.core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
+from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
 
 
 # ---------------------------------------------------------------------------
