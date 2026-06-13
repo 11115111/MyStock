@@ -524,7 +524,8 @@ def render_breadth(con_id: int, db_path: str) -> None:
 
     # 热力表：日期 × 行业
     st.subheader("宽度热力表（近 30 日 × 二级行业）")
-    hm_metric = st.selectbox(
+    hm_c1, hm_c2, hm_c3 = st.columns([2, 2, 1])
+    hm_metric = hm_c1.selectbox(
         "指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
         index=0, key="bw_hm_metric",
     )
@@ -532,11 +533,22 @@ def render_breadth(con_id: int, db_path: str) -> None:
     if pivot.empty:
         st.info("暂无数据")
     else:
-        # 根据指标选择配色：柔和蓝红色系，新低反色
-        cmap = "coolwarm_r" if hm_metric == "新低" else "coolwarm"
         # 转置：行=行业，列=日期；日期列头截为 MM-DD
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
+
+        sort_date = hm_c2.selectbox(
+            "按日期排序行", ["默认（行业名）"] + list(t.columns),
+            index=len(t.columns),  # 默认最新一天
+            key="bw_hm_sort",
+        )
+        sort_asc = hm_c3.checkbox("升序", value=True, key="bw_hm_asc")
+        if sort_date != "默认（行业名）":
+            t = t.sort_values(sort_date, ascending=sort_asc)
+        else:
+            t = t.sort_index(ascending=sort_asc)
+
+        cmap = "coolwarm_r" if hm_metric == "新低" else "coolwarm"
         styled = t.style.background_gradient(cmap=cmap, axis=0).format("{:.0f}")
         html = styled.to_html()
         st.markdown(
