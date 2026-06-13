@@ -325,7 +325,7 @@ def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, n_days: in
         if df.empty:
             return pd.DataFrame()
         pivot = df.pivot(index="日期", columns="行业", values="val")
-        pivot = pivot.sort_index(ascending=False)
+        pivot = pivot.sort_index(ascending=True)
         return pivot
     except Exception as e:
         st.error(f"pivot 失败: {e}")
