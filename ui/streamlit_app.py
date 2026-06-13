@@ -540,12 +540,11 @@ def render_breadth(con_id: int, db_path: str) -> None:
         styled = t.style.background_gradient(cmap=cmap, axis=0).format("{:.0f}")
         html = styled.to_html()
         st.markdown(
-            f"""<div style="overflow:auto;max-height:700px">
-<style>
-.hm table {{border-collapse:collapse;font-size:10px;font-family:monospace}}
+            f"""<style>
+.hm table {{border-collapse:collapse;font-size:10px;font-family:monospace;width:100%}}
 .hm th,.hm td {{padding:0px 2px;line-height:1.0;white-space:nowrap;border:none;text-align:center}}
 </style>
-<div class="hm">{html}</div></div>""",
+<div class="hm">{html}</div>""",
             unsafe_allow_html=True,
         )
 
