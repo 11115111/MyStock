@@ -533,7 +533,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
         st.info("暂无数据")
     else:
         # 根据指标选择配色：新低用反色
-        cmap = "RdYlGn_r" if hm_metric == "新低" else "RdYlGn"
+        cmap = "RdYlGn" if hm_metric == "新低" else "RdYlGn_r"
         # 转置：行=行业，列=日期；日期列头截为 MM-DD
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
