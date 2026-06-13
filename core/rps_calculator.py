@@ -86,7 +86,10 @@ WITH block_returns AS (
                   ROWS BETWEEN 14 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_15d,
         (EXP(SUM(LN(GREATEST(1 + p.block_pct_1d / 100, 0.01)))
             OVER (PARTITION BY p.block_code ORDER BY p.trade_date
-                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_20d
+                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_20d,
+        (EXP(SUM(LN(GREATEST(1 + p.block_pct_1d / 100, 0.01)))
+            OVER (PARTITION BY p.block_code ORDER BY p.trade_date
+                  ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_50d
     FROM block_daily_pct p
     WHERE p.member_count <= $max_member_count
 ),
@@ -97,7 +100,7 @@ ranked AS (
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100 AS bkrps10,
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100 AS bkrps15,
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps20,
-        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps50
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_50d NULLS FIRST) * 100 AS bkrps50
     FROM block_returns r
     WHERE r.trade_date = $target_date
 )
@@ -105,7 +108,7 @@ INSERT OR REPLACE INTO rps_block_daily
 SELECT
     r.trade_date, r.block_code, r.block_name, r.block_type,
     r.bkrps5, r.bkrps10, r.bkrps15, r.bkrps20, r.bkrps50,
-    r.block_pct_1d, r.block_pct_5d, r.block_pct_10d, r.block_pct_20d,
+    r.block_pct_1d, r.block_pct_5d, r.block_pct_10d, r.block_pct_20d, r.block_pct_50d,
     r.member_count, r.rising_count, r.limit_up_count
 FROM ranked r
 """
@@ -125,7 +128,10 @@ WITH block_returns AS (
                   ROWS BETWEEN 14 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_15d,
         (EXP(SUM(LN(GREATEST(1 + p.block_pct_1d / 100, 0.01)))
             OVER (PARTITION BY p.block_code ORDER BY p.trade_date
-                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_20d
+                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_20d,
+        (EXP(SUM(LN(GREATEST(1 + p.block_pct_1d / 100, 0.01)))
+            OVER (PARTITION BY p.block_code ORDER BY p.trade_date
+                  ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)) - 1) * 100    AS block_pct_50d
     FROM block_daily_pct p
     WHERE p.member_count <= $max_member_count
 ),
@@ -136,7 +142,7 @@ ranked AS (
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_10d NULLS FIRST) * 100 AS bkrps10,
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_15d NULLS FIRST) * 100 AS bkrps15,
         PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps20,
-        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_20d NULLS FIRST) * 100 AS bkrps50
+        PERCENT_RANK() OVER (PARTITION BY r.trade_date ORDER BY r.block_pct_50d NULLS FIRST) * 100 AS bkrps50
     FROM block_returns r
     WHERE r.trade_date BETWEEN $start_date AND $end_date
 )
@@ -144,7 +150,7 @@ INSERT OR REPLACE INTO rps_block_daily
 SELECT
     r.trade_date, r.block_code, r.block_name, r.block_type,
     r.bkrps5, r.bkrps10, r.bkrps15, r.bkrps20, r.bkrps50,
-    r.block_pct_1d, r.block_pct_5d, r.block_pct_10d, r.block_pct_20d,
+    r.block_pct_1d, r.block_pct_5d, r.block_pct_10d, r.block_pct_20d, r.block_pct_50d,
     r.member_count, r.rising_count, r.limit_up_count
 FROM ranked r
 """

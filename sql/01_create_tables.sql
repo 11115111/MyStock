@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS rps_block_daily (
     block_name VARCHAR,
     block_type VARCHAR,
     bkrps5 DOUBLE, bkrps10 DOUBLE, bkrps15 DOUBLE, bkrps20 DOUBLE, bkrps50 DOUBLE,  -- 改为 DOUBLE
-    block_pct_1d DOUBLE, block_pct_5d DOUBLE, block_pct_10d DOUBLE, block_pct_20d DOUBLE,
+    block_pct_1d DOUBLE, block_pct_5d DOUBLE, block_pct_10d DOUBLE, block_pct_20d DOUBLE, block_pct_50d DOUBLE,
     member_count INTEGER, rising_count INTEGER, limit_up_count INTEGER,
     PRIMARY KEY (trade_date, block_code)
 );

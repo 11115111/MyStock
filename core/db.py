@@ -13,6 +13,12 @@ def init_tables(con: duckdb.DuckDBPyConnection) -> None:
         stmt = stmt.strip()
         if stmt:
             con.execute(stmt)
+    # migrate: add block_pct_50d if the column doesn't exist yet
+    cols = {r[0] for r in con.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='rps_block_daily'"
+    ).fetchall()}
+    if "block_pct_50d" not in cols:
+        con.execute("ALTER TABLE rps_block_daily ADD COLUMN block_pct_50d DOUBLE")
 
 
 def refresh_block_member_count(con: duckdb.DuckDBPyConnection) -> int:
