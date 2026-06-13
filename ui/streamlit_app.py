@@ -586,6 +586,11 @@ def render_breadth(con_id: int, db_path: str) -> None:
   let sortCol = cols.length - 1;  // default: newest date
   let sortAsc = true;
 
+  function contrast(hex) {{
+    const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+    return (0.299*r + 0.587*g + 0.114*b) / 255 > 0.55 ? '#000' : '#fff';
+  }}
+
   function render() {{
     // header
     const hdr = document.getElementById('hdr-row');
@@ -626,6 +631,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
       vals[ri].forEach((v, ci) => {{
         const td = document.createElement('td');
         td.style.background = colors[ri][ci];
+        td.style.color = contrast(colors[ri][ci]);
         td.textContent = v === null ? '' : v;
         tr.appendChild(td);
       }});
