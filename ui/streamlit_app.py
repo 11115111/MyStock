@@ -537,14 +537,17 @@ def render_breadth(con_id: int, db_path: str) -> None:
         # 转置：行=行业，列=日期；日期列头截为 MM-DD
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
-        styled = (
-            t.style
-            .background_gradient(cmap=cmap, axis=0)
-            .format("{:.1f}")
-            .set_properties(**{"font-size": "7px", "padding": "0px 1px", "line-height": "1.1", "white-space": "nowrap"})
-            .set_table_styles([{"selector": "th", "props": [("font-size", "7px"), ("padding", "0px 1px")]}])
+        styled = t.style.background_gradient(cmap=cmap, axis=0).format("{:.1f}")
+        html = styled.to_html()
+        st.markdown(
+            f"""<div style="overflow:auto;max-height:700px">
+<style>
+.hm table {{border-collapse:collapse;font-size:6px;font-family:monospace}}
+.hm th,.hm td {{padding:0px 2px;line-height:1.0;white-space:nowrap;border:none}}
+</style>
+<div class="hm">{html}</div></div>""",
+            unsafe_allow_html=True,
         )
-        st.dataframe(styled, use_container_width=True, height=min(36 + 16 * len(t), 900))
 
     st.divider()
 
