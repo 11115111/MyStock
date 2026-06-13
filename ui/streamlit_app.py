@@ -297,8 +297,8 @@ def load_breadth_series(_con_id: int, db_path: str, block_name: str) -> pd.DataF
 
 
 @st.cache_data(ttl=300)
-def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, n_days: int = 30) -> pd.DataFrame:
-    """Last n_days × 二级行业 pivot table for one breadth metric."""
+def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, end_date: str | None = None, n_days: int = 30) -> pd.DataFrame:
+    """Last n_days up to end_date × 二级行业 pivot table for one breadth metric."""
     _metric_map = {
         "MA20占比":   "ROUND(b.breadth_ma20, 1)",
         "NH-NL":      "b.nh_nl",
@@ -308,11 +308,13 @@ def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, n_days: in
         "新低":       "b.new_low_count",
     }
     expr = _metric_map.get(metric_col, "ROUND(b.breadth_ma20, 1)")
+    date_filter = f"WHERE trade_date <= '{end_date}'" if end_date else ""
     con = get_con(db_path)
     try:
         df = con.execute(f"""
             WITH latest AS (
                 SELECT DISTINCT trade_date FROM block_breadth_daily
+                {date_filter}
                 ORDER BY trade_date DESC LIMIT {n_days}
             )
             SELECT
@@ -514,7 +516,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
     st.divider()
 
     # ── 热力表（统计下方）─────────────────────────────────────────────
-    pivot = load_breadth_heatmap(con_id, db_path, hm_metric)
+    pivot = load_breadth_heatmap(con_id, db_path, hm_metric, end_date=selected_date)
     if not pivot.empty:
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]
