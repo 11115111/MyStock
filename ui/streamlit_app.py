@@ -294,6 +294,44 @@ def load_breadth_series(_con_id: int, db_path: str, block_name: str) -> pd.DataF
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
+def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, n_days: int = 30) -> pd.DataFrame:
+    """Last n_days × 二级行业 pivot table for one breadth metric."""
+    _metric_map = {
+        "MA20占比":   "ROUND(b.breadth_ma20, 1)",
+        "NH-NL":      "b.nh_nl",
+        "HL指数":     "ROUND(b.high_low_index, 1)",
+        "HL指数MA10": "ROUND(b.high_low_index_ma10, 1)",
+        "新高":       "b.new_high_count",
+        "新低":       "b.new_low_count",
+    }
+    expr = _metric_map.get(metric_col, "ROUND(b.breadth_ma20, 1)")
+    con = get_con(db_path)
+    try:
+        df = con.execute(f"""
+            WITH latest AS (
+                SELECT DISTINCT trade_date FROM block_breadth_daily
+                ORDER BY trade_date DESC LIMIT {n_days}
+            )
+            SELECT
+                b.trade_date::VARCHAR   AS 日期,
+                i.block_name            AS 行业,
+                {expr}                  AS val
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            JOIN latest l              ON l.trade_date  = b.trade_date
+            WHERE {_L2_FILTER}
+        """).df()
+        if df.empty:
+            return pd.DataFrame()
+        pivot = df.pivot(index="日期", columns="行业", values="val")
+        pivot = pivot.sort_index(ascending=False)
+        return pivot
+    except Exception as e:
+        st.error(f"pivot 失败: {e}")
+        return pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # Shared column config
 # ---------------------------------------------------------------------------
@@ -481,6 +519,27 @@ def render_breadth(con_id: int, db_path: str) -> None:
             .set_index("行业")
         )
         st.bar_chart(chart_df, height=560)
+
+    st.divider()
+
+    # 热力表：日期 × 行业
+    st.subheader("宽度热力表（近 30 日 × 二级行业）")
+    hm_metric = st.selectbox(
+        "指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
+        index=0, key="bw_hm_metric",
+    )
+    pivot = load_breadth_heatmap(con_id, db_path, hm_metric)
+    if pivot.empty:
+        st.info("暂无数据")
+    else:
+        # 根据指标选择配色：NH-NL / 新低用 RdYlGn，MA20 / HL 用 RdYlGn，新低用反色
+        cmap = "RdYlGn_r" if hm_metric == "新低" else "RdYlGn"
+        styled = (
+            pivot.style
+            .background_gradient(cmap=cmap, axis=None)
+            .format("{:.1f}")
+        )
+        st.dataframe(styled, use_container_width=True, height=min(50 + 35 * len(pivot), 900))
 
     st.divider()
 
