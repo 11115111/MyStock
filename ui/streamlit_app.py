@@ -539,12 +539,12 @@ def render_breadth(con_id: int, db_path: str) -> None:
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
         styled = (
             t.style
-            .background_gradient(cmap=cmap, axis=None)
+            .background_gradient(cmap=cmap, axis=0)
             .format("{:.1f}")
-            .set_properties(**{"font-size": "10px", "padding": "2px 4px", "white-space": "nowrap"})
-            .set_table_styles([{"selector": "th", "props": [("font-size", "10px"), ("padding", "2px 4px")]}])
+            .set_properties(**{"font-size": "9px", "padding": "1px 2px", "white-space": "nowrap"})
+            .set_table_styles([{"selector": "th", "props": [("font-size", "9px"), ("padding", "1px 2px")]}])
         )
-        st.dataframe(styled, use_container_width=True, height=min(36 + 26 * len(t), 900))
+        st.dataframe(styled, use_container_width=True, height=min(36 + 22 * len(t), 900))
 
     st.divider()
 
