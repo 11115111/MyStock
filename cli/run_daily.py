@@ -49,6 +49,7 @@ def _load_cfg(path: Path) -> dict:
 @click.option("--cfg", "cfg_path", default=str(_DEFAULT_CFG), help="Path to thresholds.yaml")
 @click.option("--skip-sanxianhong", is_flag=True, help="Skip 三线红 step")
 @click.option("--refresh-blocks", is_flag=True, help="Refresh stock_pool then exit")
+@click.option("--drop-tables", is_flag=True, help="Drop computed tables before --init-history (forces clean rebuild)")
 def main(
     db: str,
     target_date: str | None,
@@ -58,12 +59,22 @@ def main(
     cfg_path: str,
     skip_sanxianhong: bool,
     refresh_blocks: bool,
+    drop_tables: bool,
 ) -> None:
+    if drop_tables and not init_history:
+        raise click.UsageError("--drop-tables requires --init-history")
+
     cfg = _load_cfg(Path(cfg_path))
     szh_cfg = cfg["sanxianhong"]
     max_member = cfg.get("block_rps", {}).get("max_member_count", 100)
 
     con = get_connection(db)
+
+    if drop_tables:
+        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "sanxianhong_daily"):
+            con.execute(f"DROP TABLE IF EXISTS {tbl}")
+            click.echo(f"[drop] {tbl}")
+
     init_tables(con)
 
     if refresh_blocks:
