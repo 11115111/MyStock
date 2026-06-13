@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 import duckdb
+import json
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -524,8 +526,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
 
     # 热力表：日期 × 行业
     st.subheader("宽度热力表（近 30 日 × 二级行业）")
-    hm_c1, hm_c2, hm_c3 = st.columns([2, 2, 1])
-    hm_metric = hm_c1.selectbox(
+    hm_metric = st.selectbox(
         "指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
         index=0, key="bw_hm_metric",
     )
@@ -533,32 +534,109 @@ def render_breadth(con_id: int, db_path: str) -> None:
     if pivot.empty:
         st.info("暂无数据")
     else:
-        # 转置：行=行业，列=日期；日期列头截为 MM-DD
+        import streamlit.components.v1 as components
+        import matplotlib.cm as mcm
+        import matplotlib.colors as mcolors
+
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
 
-        sort_date = hm_c2.selectbox(
-            "按日期排序行", ["默认（行业名）"] + list(t.columns),
-            index=len(t.columns),  # 默认最新一天
-            key="bw_hm_sort",
-        )
-        sort_asc = hm_c3.checkbox("升序", value=True, key="bw_hm_asc")
-        if sort_date != "默认（行业名）":
-            t = t.sort_values(sort_date, ascending=sort_asc)
-        else:
-            t = t.sort_index(ascending=sort_asc)
+        cmap_fn = mcm.get_cmap("coolwarm_r" if hm_metric == "新低" else "coolwarm")
 
-        cmap = "coolwarm_r" if hm_metric == "新低" else "coolwarm"
-        styled = t.style.background_gradient(cmap=cmap, axis=0).format("{:.0f}")
-        html = styled.to_html()
-        st.markdown(
-            f"""<style>
-.hm table {{border-collapse:collapse;font-size:11px;font-family:monospace;width:100%}}
-.hm th,.hm td {{padding:1px 0px;line-height:1.0;white-space:nowrap;border:none;text-align:center}}
+        # 计算每列的颜色（axis=0 per-column 归一）
+        colors = []  # shape: [n_rows][n_cols]
+        vals = t.values.astype(float)
+        for ci in range(vals.shape[1]):
+            col = vals[:, ci]
+            vmin, vmax = np.nanmin(col), np.nanmax(col)
+            denom = vmax - vmin if vmax > vmin else 1.0
+            normed = (col - vmin) / denom
+            colors.append([mcolors.to_hex(cmap_fn(float(v))) for v in normed])
+        # colors[ci][ri] → transpose to colors[ri][ci] for row-first layout
+        colors_t = [[colors[ci][ri] for ci in range(len(colors))] for ri in range(len(t))]
+
+        rows_json  = json.dumps(t.index.tolist())
+        cols_json  = json.dumps(t.columns.tolist())
+        vals_json  = json.dumps([[int(v) if not np.isnan(v) else None for v in row] for row in vals])
+        colors_json = json.dumps(colors_t)
+        n_rows = len(t)
+        hdr_h = 70   # px reserved for 45° header
+        row_h = 18   # px per data row
+        total_h = hdr_h + n_rows * row_h + 20
+
+        html = f"""
+<style>
+  #hm-wrap {{font-family:monospace;font-size:10px;width:100%;overflow:hidden}}
+  #hm-table {{border-collapse:collapse;width:100%}}
+  #hm-table td {{padding:0 3px;line-height:{row_h}px;height:{row_h}px;text-align:center;white-space:nowrap;cursor:default}}
+  #hm-table th.idx {{padding:0 4px;text-align:left;vertical-align:bottom;white-space:nowrap;height:{hdr_h}px}}
+  #hm-table th.col-hdr {{height:{hdr_h}px;padding:0;vertical-align:bottom;text-align:left;cursor:pointer;white-space:nowrap}}
+  #hm-table th.col-hdr div {{transform:rotate(-45deg);transform-origin:left bottom;width:1.5em;margin-left:8px;padding-bottom:2px}}
+  #hm-table th.col-hdr.asc::after  {{content:" ▲";font-size:8px}}
+  #hm-table th.col-hdr.desc::after {{content:" ▼";font-size:8px}}
+  #hm-table tr:hover td {{outline:1px solid #888}}
 </style>
-<div class="hm">{html}</div>""",
-            unsafe_allow_html=True,
-        )
+<div id="hm-wrap"><table id="hm-table"><thead><tr id="hdr-row"></tr></thead><tbody id="body"></tbody></table></div>
+<script>
+(function(){{
+  const rows   = {rows_json};
+  const cols   = {cols_json};
+  const vals   = {vals_json};
+  const colors = {colors_json};
+  let sortCol = cols.length - 1;  // default: newest date
+  let sortAsc = true;
+
+  function render() {{
+    // header
+    const hdr = document.getElementById('hdr-row');
+    hdr.innerHTML = '';
+    const th0 = document.createElement('th');
+    th0.className = 'idx';
+    th0.textContent = '';
+    hdr.appendChild(th0);
+    cols.forEach((c, ci) => {{
+      const th = document.createElement('th');
+      th.className = 'col-hdr' + (ci===sortCol ? (sortAsc?' asc':' desc') : '');
+      th.innerHTML = '<div>' + c + '</div>';
+      th.onclick = () => {{
+        if (sortCol === ci) {{ sortAsc = !sortAsc; }}
+        else {{ sortCol = ci; sortAsc = true; }}
+        render();
+      }};
+      hdr.appendChild(th);
+    }});
+
+    // sort row indices
+    const order = rows.map((_, i) => i).sort((a, b) => {{
+      const av = vals[a][sortCol], bv = vals[b][sortCol];
+      if (av===null && bv===null) return 0;
+      if (av===null) return 1;
+      if (bv===null) return -1;
+      return sortAsc ? av - bv : bv - av;
+    }});
+
+    const tbody = document.getElementById('body');
+    tbody.innerHTML = '';
+    order.forEach(ri => {{
+      const tr = document.createElement('tr');
+      const td0 = document.createElement('td');
+      td0.style.textAlign = 'left';
+      td0.textContent = rows[ri];
+      tr.appendChild(td0);
+      vals[ri].forEach((v, ci) => {{
+        const td = document.createElement('td');
+        td.style.background = colors[ri][ci];
+        td.textContent = v === null ? '' : v;
+        tr.appendChild(td);
+      }});
+      tbody.appendChild(tr);
+    }});
+  }}
+  render();
+}})();
+</script>
+"""
+        components.html(html, height=total_h, scrolling=False)
 
     st.divider()
 
