@@ -588,10 +588,19 @@ def main() -> None:
         st.error(f"无法连接数据库: {e}")
         return
 
-    tab_szh, tab_breadth = st.tabs(["📈 三线红榜单", "🌡️ 市场宽度"])
-    with tab_szh:
+    with st.sidebar:
+        st.divider()
+        st.header("模块")
+        module = st.radio(
+            "选择模块",
+            ["📈 三线红榜单", "🌡️ 市场宽度"],
+            index=0,
+            label_visibility="collapsed",
+        )
+
+    if module == "📈 三线红榜单":
         render_sanxianhong(con_id, db_path)
-    with tab_breadth:
+    else:
         render_breadth(con_id, db_path)
 
 
