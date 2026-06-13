@@ -26,7 +26,8 @@ SELECT
     bm.block_code,
     bi.block_name,
     bi.block_type,
-    AVG(bd.change_pct)                                                       AS block_pct_1d,
+    SUM(CASE WHEN bd.turnover > 0 THEN bd.change_pct * bd.floatmv END)
+        / NULLIF(SUM(CASE WHEN bd.turnover > 0 THEN bd.floatmv END), 0)       AS block_pct_1d,
     COUNT(bd.symbol)                                                         AS member_count,
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
@@ -48,7 +49,8 @@ SELECT
     bm.block_code,
     bi.block_name,
     bi.block_type,
-    AVG(bd.change_pct)                                                       AS block_pct_1d,
+    SUM(CASE WHEN bd.turnover > 0 THEN bd.change_pct * bd.floatmv END)
+        / NULLIF(SUM(CASE WHEN bd.turnover > 0 THEN bd.floatmv END), 0)       AS block_pct_1d,
     COUNT(bd.symbol)                                                         AS member_count,
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
