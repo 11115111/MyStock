@@ -532,8 +532,8 @@ def render_breadth(con_id: int, db_path: str) -> None:
     if pivot.empty:
         st.info("暂无数据")
     else:
-        # 根据指标选择配色：新低用反色
-        cmap = "RdYlGn" if hm_metric == "新低" else "RdYlGn_r"
+        # 根据指标选择配色：柔和蓝红色系，新低反色
+        cmap = "coolwarm_r" if hm_metric == "新低" else "coolwarm"
         # 转置：行=行业，列=日期；日期列头截为 MM-DD
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
@@ -541,10 +541,10 @@ def render_breadth(con_id: int, db_path: str) -> None:
             t.style
             .background_gradient(cmap=cmap, axis=0)
             .format("{:.1f}")
-            .set_properties(**{"font-size": "9px", "padding": "1px 2px", "white-space": "nowrap"})
-            .set_table_styles([{"selector": "th", "props": [("font-size", "9px"), ("padding", "1px 2px")]}])
+            .set_properties(**{"font-size": "7px", "padding": "0px 1px", "line-height": "1.1", "white-space": "nowrap"})
+            .set_table_styles([{"selector": "th", "props": [("font-size", "7px"), ("padding", "0px 1px")]}])
         )
-        st.dataframe(styled, use_container_width=True, height=min(36 + 22 * len(t), 900))
+        st.dataframe(styled, use_container_width=True, height=min(36 + 16 * len(t), 900))
 
     st.divider()
 
