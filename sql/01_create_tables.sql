@@ -28,7 +28,25 @@ CREATE TABLE IF NOT EXISTS rps_stock_daily (
     hhv60_qfq DOUBLE, hhv150_qfq DOUBLE, hhv250_qfq DOUBLE,
     h_div_hhv150 DOUBLE, h_div_hhv250 DOUBLE,
     close_bfq DOUBLE, floatmv DOUBLE, totalmv DOUBLE, turnover DOUBLE, amount DOUBLE, change_pct DOUBLE,
+    is_new_high_60 INTEGER, is_new_low_60 INTEGER, is_above_ma20 INTEGER,  -- 个股宽度标志位
     PRIMARY KEY (trade_date, symbol)
+);
+
+-- 板块市场宽度：新高新低（NH-NL / High-Low Index）+ MA20 站上占比
+CREATE TABLE IF NOT EXISTS block_breadth_daily (
+    trade_date DATE NOT NULL,
+    block_code VARCHAR NOT NULL,
+    block_name VARCHAR,
+    block_type VARCHAR,
+    member_count       INTEGER,   -- 当日纳入计算的成员数（在 rps_stock_daily 中）
+    new_high_count     INTEGER,   -- 60 日新高家数
+    new_low_count      INTEGER,   -- 60 日新低家数
+    nh_nl              INTEGER,    -- 新高 - 新低
+    high_low_index     DOUBLE,    -- NH / (NH + NL) * 100
+    high_low_index_ma10 DOUBLE,   -- High-Low Index 的 10 日均值（平滑）
+    above_ma20_count   INTEGER,   -- 站上 MA20 的家数
+    breadth_ma20       DOUBLE,    -- 站上 MA20 占比 %
+    PRIMARY KEY (trade_date, block_code)
 );
 
 CREATE TABLE IF NOT EXISTS rps_block_daily (

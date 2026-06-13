@@ -28,6 +28,8 @@ from core.rps_calculator import (
     calc_stock_rps_history,
     calc_block_rps,
     calc_block_rps_history,
+    calc_block_breadth,
+    calc_block_breadth_history,
 )
 from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
 
@@ -71,7 +73,7 @@ def main(
     con = get_connection(db)
 
     if drop_tables:
-        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "sanxianhong_daily"):
+        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "block_breadth_daily", "sanxianhong_daily"):
             con.execute(f"DROP TABLE IF EXISTS {tbl}")
             click.echo(f"[drop] {tbl}")
 
@@ -107,6 +109,10 @@ def main(
         n = calc_block_rps_history(con, start_date, end_date, max_member_count=max_member)
         click.echo(f"  {n} rows into rps_block_daily")
 
+        click.echo(f"[block breadth] history {start_date} → {end_date}")
+        n = calc_block_breadth_history(con, start_date, end_date)
+        click.echo(f"  {n} rows into block_breadth_daily")
+
         if not skip_sanxianhong:
             versions = list(szh_cfg.keys())
             click.echo(f"[三线红] history {start_date} → {end_date} versions={versions}")
@@ -133,6 +139,10 @@ def main(
 
         click.echo(f"[block RPS] {target_date} (max_member={max_member})")
         n = calc_block_rps(con, target_date, max_member_count=max_member)
+        click.echo(f"  {n} rows")
+
+        click.echo(f"[block breadth] {target_date}")
+        n = calc_block_breadth(con, target_date)
         click.echo(f"  {n} rows")
 
         if not skip_sanxianhong:
