@@ -543,7 +543,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
             f"""<div style="overflow:auto;max-height:700px">
 <style>
 .hm table {{border-collapse:collapse;font-size:10px;font-family:monospace}}
-.hm th,.hm td {{padding:0px 2px;line-height:1.0;white-space:nowrap;border:none}}
+.hm th,.hm td {{padding:0px 2px;line-height:1.0;white-space:nowrap;border:none;text-align:center}}
 </style>
 <div class="hm">{html}</div></div>""",
             unsafe_allow_html=True,
