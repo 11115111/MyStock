@@ -1,4 +1,8 @@
-"""三线红榜单可视化 — Streamlit app.
+"""A股情绪周期看板 — Streamlit app.
+
+模块：
+    📈 三线红榜单   — sanxianhong_daily 榜单 / 新上榜 / 退榜
+    🌡️ 市场宽度     — block_breadth_daily 按通达信二级行业的 NH-NL / High-Low Index / MA20 宽度
 
 Run from repo root:
     streamlit run rps/ui/streamlit_app.py -- --db /path/to/your.duckdb
@@ -19,10 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="三线红榜单",
+    page_title="A股情绪周期看板",
     page_icon="📈",
     layout="wide",
 )
+
+# 通达信二级行业过滤口径（与 load_industry 一致）
+_L2_FILTER = "i.block_type = 'tdx_research' AND i.block_level = 2"
 
 # ---------------------------------------------------------------------------
 # DB connection — cached per db path
@@ -44,7 +51,7 @@ def _db_path_from_args() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Data loaders
+# Data loaders — 三线红
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
@@ -134,12 +141,12 @@ def load_industry(_con_id: int, db_path: str) -> pd.DataFrame:
     """Return symbol → 所属行业 mapping (行业二级)."""
     con = get_con(db_path)
     try:
-        return con.execute("""
+        return con.execute(f"""
             SELECT bm.stock_symbol AS symbol,
-                   STRING_AGG(bi.block_name, ' / ' ORDER BY bi.block_name) AS 所属行业
+                   STRING_AGG(i.block_name, ' / ' ORDER BY i.block_name) AS 所属行业
             FROM raw_tdx_blocks_member bm
-            JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
-            WHERE bi.block_type = 'tdx_research' AND bi.block_level = 2
+            JOIN raw_tdx_blocks_info   i ON i.block_code = bm.block_code
+            WHERE {_L2_FILTER}
             GROUP BY bm.stock_symbol
         """).df()
     except Exception:
@@ -225,6 +232,69 @@ def load_exits(_con_id: int, db_path: str, trade_date: str, version: str) -> pd.
 
 
 # ---------------------------------------------------------------------------
+# Data loaders — 市场宽度（通达信二级行业）
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_breadth_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT trade_date FROM block_breadth_daily ORDER BY trade_date DESC LIMIT 250"
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
+def load_breadth_l2(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
+    """每个二级行业当日的宽度指标。"""
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT
+                b.block_name                    AS 行业,
+                b.member_count                  AS 成员数,
+                b.new_high_count                AS 新高,
+                b.new_low_count                 AS 新低,
+                b.nh_nl                         AS "NH-NL",
+                ROUND(b.high_low_index, 1)      AS "HL指数",
+                ROUND(b.high_low_index_ma10, 1) AS "HL指数MA10",
+                ROUND(b.breadth_ma20, 1)        AS "MA20占比",
+                b.above_ma20_count              AS "MA20上方家数"
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            WHERE b.trade_date = $1 AND {_L2_FILTER}
+            ORDER BY b.breadth_ma20 DESC
+        """, [trade_date]).df()
+    except Exception as e:
+        st.error(f"查询失败: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_breadth_series(_con_id: int, db_path: str, block_name: str) -> pd.DataFrame:
+    """单个二级行业的宽度时间序列。"""
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT
+                b.trade_date                    AS 日期,
+                b.nh_nl                          AS "NH-NL",
+                ROUND(b.high_low_index, 1)      AS "HL指数",
+                ROUND(b.high_low_index_ma10, 1) AS "HL指数MA10",
+                ROUND(b.breadth_ma20, 1)        AS "MA20占比"
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            WHERE i.block_name = $1 AND {_L2_FILTER}
+            ORDER BY b.trade_date
+        """, [block_name]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
 # Shared column config
 # ---------------------------------------------------------------------------
 
@@ -232,9 +302,9 @@ _COL_CFG = {
     "代码":         st.column_config.TextColumn("代码", width="small"),
     "名称":         st.column_config.TextColumn("名称", width="small"),
     "所属行业":     st.column_config.TextColumn("所属行业", width="medium"),
-    "RPS50":        st.column_config.NumberColumn("RPS50",  format="%.2f"),   # 改为浮点数格式
-    "RPS120":       st.column_config.NumberColumn("RPS120", format="%.2f"),   # 改为浮点数格式
-    "RPS250":       st.column_config.NumberColumn("RPS250", format="%.2f"),   # 改为浮点数格式
+    "RPS50":        st.column_config.NumberColumn("RPS50",  format="%.2f"),
+    "RPS120":       st.column_config.NumberColumn("RPS120", format="%.2f"),
+    "RPS250":       st.column_config.NumberColumn("RPS250", format="%.2f"),
     "近高比":       st.column_config.NumberColumn("近高比", format="%.3f"),
     "连续天数":     st.column_config.NumberColumn("连续天数", format="%d"),
     "离场前连续天数": st.column_config.NumberColumn("离场前连续天数", format="%d"),
@@ -248,58 +318,42 @@ _COL_CFG = {
     "流通市值亿":   st.column_config.NumberColumn("流通市值(亿)", format="%.1f"),
 }
 
+_BREADTH_COL_CFG = {
+    "行业":        st.column_config.TextColumn("行业", width="medium"),
+    "成员数":      st.column_config.NumberColumn("成员数", format="%d"),
+    "新高":        st.column_config.NumberColumn("新高", format="%d"),
+    "新低":        st.column_config.NumberColumn("新低", format="%d"),
+    "NH-NL":       st.column_config.NumberColumn("NH-NL", format="%d"),
+    "HL指数":      st.column_config.NumberColumn("HL指数", format="%.1f"),
+    "HL指数MA10":  st.column_config.NumberColumn("HL指数MA10", format="%.1f"),
+    "MA20占比":    st.column_config.NumberColumn("MA20占比", format="%.1f%%"),
+    "MA20上方家数": st.column_config.NumberColumn("MA20上方家数", format="%d"),
+}
+
 
 # ---------------------------------------------------------------------------
-# Main UI
+# Module: 三线红榜单
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    st.title("📈 三线红榜单")
-
-    db_path = _db_path_from_args()
-
-    # Sidebar — DB path input if not passed via --db
-    with st.sidebar:
-        st.header("数据源")
-        if db_path:
-            st.success(f"已连接: `{db_path}`")
-        else:
-            db_path = st.text_input("DuckDB 文件路径", placeholder="/path/to/your.duckdb")
-        if not db_path:
-            st.info("请输入数据库路径或通过 `-- --db /path/to/db` 启动")
-            return
-
-        st.divider()
-        st.header("筛选")
-
-    # Attempt DB connection
-    try:
-        con = get_con(db_path)
-        con_id = id(con)
-    except Exception as e:
-        st.error(f"无法连接数据库: {e}")
-        return
-
-    # Available dates
+def render_sanxianhong(con_id: int, db_path: str) -> None:
     dates = load_dates(con_id, db_path)
     if not dates:
         st.warning("sanxianhong_daily 暂无数据，请先运行 `--init-history`")
         return
 
-    with st.sidebar:
-        selected_date = st.selectbox("日期", dates, index=0)
-        version = st.selectbox("版本", ["strict", "loose"], index=0,
-                               help="strict: rps50/120/250 全部达标 + h_div_hhv150\nloose: 任一RPS ≥ 阈值 + h_div_hhv250")
-        blocks = load_blocks(con_id, db_path, selected_date, version)
-        selected_block = st.selectbox("板块筛选", blocks, index=0)
-
-        st.divider()
-        sort_col = st.selectbox(
-            "排序列",
-            ["连续天数", "60日在榜", "上榜次数", "RPS50", "RPS120", "RPS250", "近高比", "流通市值亿", "涨跌幅", "换手率"],
-            index=0,
-        )
-        sort_asc = st.checkbox("升序", value=False)
+    # 顶部筛选条
+    c1, c2, c3, c4, c5 = st.columns([2, 1.5, 2, 2, 1])
+    selected_date = c1.selectbox("日期", dates, index=0, key="szh_date")
+    version = c2.selectbox("版本", ["strict", "loose"], index=0, key="szh_ver",
+                           help="strict: rps50/120/250 全部达标 + h_div_hhv150\nloose: 任一RPS ≥ 阈值 + h_div_hhv250")
+    blocks = load_blocks(con_id, db_path, selected_date, version)
+    selected_block = c3.selectbox("板块筛选", blocks, index=0, key="szh_block")
+    sort_col = c4.selectbox(
+        "排序列",
+        ["连续天数", "60日在榜", "上榜次数", "RPS50", "RPS120", "RPS250", "近高比", "流通市值亿", "涨跌幅", "换手率"],
+        index=0, key="szh_sort",
+    )
+    sort_asc = c5.checkbox("升序", value=False, key="szh_asc")
 
     # Load data
     df = load_sanxianhong(con_id, db_path, selected_date, version, selected_block)
@@ -314,11 +368,10 @@ def main() -> None:
         st.info(f"{selected_date} 暂无三线红数据")
         return
 
-    # Sort main table
     if sort_col in df.columns:
         df = df.sort_values(sort_col, ascending=sort_asc)
 
-    # Summary metrics — 6 columns
+    # Summary metrics
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("在榜股票数", len(df))
     col2.metric("平均连续天数", f"{df['连续天数'].mean():.1f}")
@@ -329,7 +382,6 @@ def main() -> None:
 
     st.divider()
 
-    # Main table
     st.dataframe(
         df.reset_index(drop=True),
         use_container_width=True,
@@ -338,7 +390,6 @@ def main() -> None:
         hide_index=True,
     )
 
-    # Download main table
     csv = df.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         label="下载 CSV",
@@ -349,29 +400,140 @@ def main() -> None:
 
     st.divider()
 
-    # New entries
     with st.expander(f"🟢 今日新上榜 ({len(df_new)} 只)", expanded=True):
         if df_new.empty:
             st.info("今日无新上榜")
         else:
-            st.dataframe(
-                df_new.reset_index(drop=True),
-                use_container_width=True,
-                column_config=_COL_CFG,
-                hide_index=True,
-            )
+            st.dataframe(df_new.reset_index(drop=True), use_container_width=True,
+                         column_config=_COL_CFG, hide_index=True)
 
-    # Exits
     with st.expander(f"🔴 今日退榜 ({len(df_exit)} 只)", expanded=True):
         if df_exit.empty:
             st.info("今日无退榜")
         else:
-            st.dataframe(
-                df_exit.reset_index(drop=True),
-                use_container_width=True,
-                column_config=_COL_CFG,
-                hide_index=True,
-            )
+            st.dataframe(df_exit.reset_index(drop=True), use_container_width=True,
+                         column_config=_COL_CFG, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Module: 市场宽度（通达信二级行业）
+# ---------------------------------------------------------------------------
+
+def render_breadth(con_id: int, db_path: str) -> None:
+    dates = load_breadth_dates(con_id, db_path)
+    if not dates:
+        st.warning("block_breadth_daily 暂无数据，请先运行 `--init-history`")
+        return
+
+    c1, c2 = st.columns([2, 4])
+    selected_date = c1.selectbox("日期", dates, index=0, key="bw_date")
+
+    df = load_breadth_l2(con_id, db_path, selected_date)
+    if df.empty:
+        st.info(f"{selected_date} 暂无市场宽度数据")
+        return
+
+    # 全市场宽度概览（按二级行业汇总 ≈ 全市场）
+    total_members = int(df["成员数"].sum())
+    total_nh = int(df["新高"].sum())
+    total_nl = int(df["新低"].sum())
+    total_above = int(df["MA20上方家数"].sum())
+    mkt_ma20 = total_above / total_members * 100 if total_members else 0
+    mkt_hl = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("二级行业数", len(df))
+    m2.metric("全市场新高", total_nh)
+    m3.metric("全市场新低", total_nl)
+    m4.metric("全市场 NH-NL", total_nh - total_nl)
+    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
+    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}（新高占新高+新低比）")
+
+    st.divider()
+
+    metric_choice = c2.selectbox(
+        "排行指标", ["MA20占比", "NH-NL", "HL指数MA10", "新高", "新低"],
+        index=0, key="bw_metric",
+    )
+
+    left, right = st.columns([3, 2])
+
+    with left:
+        st.subheader("二级行业宽度明细")
+        st.dataframe(
+            df.sort_values(metric_choice, ascending=False).reset_index(drop=True),
+            use_container_width=True,
+            height=560,
+            column_config=_BREADTH_COL_CFG,
+            hide_index=True,
+        )
+        csv = df.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button("下载 CSV", data=csv,
+                           file_name=f"breadth_l2_{selected_date}.csv", mime="text/csv")
+
+    with right:
+        st.subheader(f"按「{metric_choice}」排行")
+        top_n = st.slider("显示行业数", 5, 40, 20, key="bw_topn")
+        chart_df = (
+            df[["行业", metric_choice]]
+            .sort_values(metric_choice, ascending=False)
+            .head(top_n)
+            .set_index("行业")
+        )
+        st.bar_chart(chart_df, height=560)
+
+    st.divider()
+
+    # 单行业时间序列
+    st.subheader("行业宽度走势")
+    industries = df.sort_values("MA20占比", ascending=False)["行业"].tolist()
+    sel = st.selectbox("选择二级行业", industries, index=0, key="bw_series")
+    series = load_breadth_series(con_id, db_path, sel)
+    if series.empty:
+        st.info("无走势数据")
+        return
+
+    series = series.set_index("日期")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.caption("HL指数 / HL指数MA10 / MA20占比")
+        st.line_chart(series[["HL指数", "HL指数MA10", "MA20占比"]], height=300)
+    with cc2:
+        st.caption("NH-NL（新高 - 新低）")
+        st.bar_chart(series[["NH-NL"]], height=300)
+
+
+# ---------------------------------------------------------------------------
+# Main UI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    st.title("📈 A股情绪周期看板")
+
+    db_path = _db_path_from_args()
+
+    with st.sidebar:
+        st.header("数据源")
+        if db_path:
+            st.success(f"已连接: `{db_path}`")
+        else:
+            db_path = st.text_input("DuckDB 文件路径", placeholder="/path/to/your.duckdb")
+        if not db_path:
+            st.info("请输入数据库路径或通过 `-- --db /path/to/db` 启动")
+            return
+
+    try:
+        con = get_con(db_path)
+        con_id = id(con)
+    except Exception as e:
+        st.error(f"无法连接数据库: {e}")
+        return
+
+    tab_szh, tab_breadth = st.tabs(["📈 三线红榜单", "🌡️ 市场宽度"])
+    with tab_szh:
+        render_sanxianhong(con_id, db_path)
+    with tab_breadth:
+        render_breadth(con_id, db_path)
 
 
 if __name__ == "__main__":
