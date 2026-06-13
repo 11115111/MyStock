@@ -553,8 +553,8 @@ def render_breadth(con_id: int, db_path: str) -> None:
         html = styled.to_html()
         st.markdown(
             f"""<style>
-.hm table {{border-collapse:collapse;font-size:10px;font-family:monospace;width:100%}}
-.hm th,.hm td {{padding:0px 2px;line-height:1.0;white-space:nowrap;border:none;text-align:center}}
+.hm table {{border-collapse:collapse;font-size:11px;font-family:monospace;width:100%}}
+.hm th,.hm td {{padding:1px 0px;line-height:1.0;white-space:nowrap;border:none;text-align:center}}
 </style>
 <div class="hm">{html}</div>""",
             unsafe_allow_html=True,
