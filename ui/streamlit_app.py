@@ -460,23 +460,62 @@ def render_sanxianhong(con_id: int, db_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def render_breadth(con_id: int, db_path: str) -> None:
+    import datetime
+    import streamlit.components.v1 as components
+    import matplotlib.cm as mcm
+    import matplotlib.colors as mcolors
+
     dates = load_breadth_dates(con_id, db_path)
     if not dates:
         st.warning("block_breadth_daily 暂无数据，请先运行 `--init-history`")
         return
 
-    # ── 热力表（置顶）──────────────────────────────────────────────────
-    hm_c1, hm_c2 = st.columns([2, 2])
-    hm_metric = hm_c1.selectbox(
+    date_objs = sorted({datetime.date.fromisoformat(d) for d in dates})
+    min_d, max_d = date_objs[0], date_objs[-1]
+    date_set = {d.isoformat() for d in date_objs}
+
+    # ── 顶部控件行 ─────────────────────────────────────────────────────
+    tc1, tc2 = st.columns([2, 3])
+    picked = tc1.date_input(
+        "日期", value=max_d, min_value=min_d, max_value=max_d, key="bw_date",
+    )
+    # 若选中日期不在数据中，向前找最近有效日期
+    selected_date = picked.isoformat()
+    if selected_date not in date_set:
+        valid = [d for d in sorted(date_set) if d <= selected_date]
+        selected_date = valid[-1] if valid else sorted(date_set)[-1]
+
+    hm_metric = tc2.selectbox(
         "热力表指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
         index=0, key="bw_hm_metric",
     )
+
+    # ── 全市场统计概览 ─────────────────────────────────────────────────
+    df = load_breadth_l2(con_id, db_path, selected_date)
+    if df.empty:
+        st.info(f"{selected_date} 暂无市场宽度数据")
+        return
+
+    total_members = int(df["成员数"].sum())
+    total_nh      = int(df["新高"].sum())
+    total_nl      = int(df["新低"].sum())
+    total_above   = int(df["MA20上方家数"].sum())
+    mkt_ma20 = total_above / total_members * 100 if total_members else 0
+    mkt_hl   = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("二级行业数", len(df))
+    m2.metric("全市场新高", total_nh)
+    m3.metric("全市场新低", total_nl)
+    m4.metric("全市场 NH-NL", total_nh - total_nl)
+    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
+    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}")
+
+    st.divider()
+
+    # ── 热力表（统计下方）─────────────────────────────────────────────
     pivot = load_breadth_heatmap(con_id, db_path, hm_metric)
     if not pivot.empty:
-        import streamlit.components.v1 as components
-        import matplotlib.cm as mcm
-        import matplotlib.colors as mcolors
-
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]
         cmap_fn = mcm.get_cmap("coolwarm_r" if hm_metric == "新低" else "coolwarm")
@@ -573,28 +612,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
 
     st.divider()
 
-    # ── 全市场概览 + 明细表 ────────────────────────────────────────────
-    selected_date = hm_c2.selectbox("明细日期", dates, index=0, key="bw_date")
-    df = load_breadth_l2(con_id, db_path, selected_date)
-    if df.empty:
-        st.info(f"{selected_date} 暂无市场宽度数据")
-        return
-
-    total_members = int(df["成员数"].sum())
-    total_nh = int(df["新高"].sum())
-    total_nl = int(df["新低"].sum())
-    total_above = int(df["MA20上方家数"].sum())
-    mkt_ma20 = total_above / total_members * 100 if total_members else 0
-    mkt_hl = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("二级行业数", len(df))
-    m2.metric("全市场新高", total_nh)
-    m3.metric("全市场新低", total_nl)
-    m4.metric("全市场 NH-NL", total_nh - total_nl)
-    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
-    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}")
-
+    # ── 行业明细表 ─────────────────────────────────────────────────────
     metric_choice = st.selectbox(
         "明细排序", ["MA20占比", "NH-NL", "HL指数MA10", "新高", "新低"],
         index=0, key="bw_metric",
