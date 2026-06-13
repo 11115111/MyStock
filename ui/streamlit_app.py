@@ -532,14 +532,19 @@ def render_breadth(con_id: int, db_path: str) -> None:
     if pivot.empty:
         st.info("暂无数据")
     else:
-        # 根据指标选择配色：NH-NL / 新低用 RdYlGn，MA20 / HL 用 RdYlGn，新低用反色
+        # 根据指标选择配色：新低用反色
         cmap = "RdYlGn_r" if hm_metric == "新低" else "RdYlGn"
+        # 转置：行=行业，列=日期；日期列头截为 MM-DD
+        t = pivot.T
+        t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
         styled = (
-            pivot.style
+            t.style
             .background_gradient(cmap=cmap, axis=None)
             .format("{:.1f}")
+            .set_properties(**{"font-size": "10px", "padding": "2px 4px", "white-space": "nowrap"})
+            .set_table_styles([{"selector": "th", "props": [("font-size", "10px"), ("padding", "2px 4px")]}])
         )
-        st.dataframe(styled, use_container_width=True, height=min(50 + 35 * len(pivot), 900))
+        st.dataframe(styled, use_container_width=True, height=min(36 + 26 * len(t), 900))
 
     st.divider()
 
