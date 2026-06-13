@@ -15,21 +15,6 @@ def init_tables(con: duckdb.DuckDBPyConnection) -> None:
             con.execute(stmt)
 
 
-def refresh_block_member_count(con: duckdb.DuckDBPyConnection) -> int:
-    """Recount members per block from raw_tdx_blocks_member and upsert cache.
-
-    Call after block data is synced. Returns number of blocks updated.
-    """
-    con.execute("""
-        INSERT OR REPLACE INTO block_member_count (block_code, member_count, updated_at)
-        SELECT block_code, COUNT(*) AS member_count, current_timestamp
-        FROM raw_tdx_blocks_member
-        GROUP BY block_code
-    """)
-    row = con.execute("SELECT COUNT(*) FROM block_member_count").fetchone()
-    return row[0] if row else 0
-
-
 def refresh_stock_pool(con: duckdb.DuckDBPyConnection) -> int:
     """Rebuild eligible stock pool: excludes B-shares (9x) and 三板 (4x).
 

@@ -1,7 +1,7 @@
 """Daily RPS pipeline entry point.
 
 Cache refresh order (run once after each upstream data sync):
-    --refresh-blocks   → block_member_count + stock_pool (after symbol/block data sync)
+    --refresh-blocks   → stock_pool (after symbol/block data sync)
     --refresh-bfq      → block_daily_pct history (after full history backfill)
 
 Normal daily run:
@@ -20,7 +20,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from core.db import get_connection, init_tables, refresh_block_member_count, refresh_stock_pool
+from core.db import get_connection, init_tables, refresh_stock_pool
 from core.rps_calculator import (
     calc_block_daily_pct,
     calc_block_daily_pct_history,
@@ -48,7 +48,7 @@ def _load_cfg(path: Path) -> dict:
 @click.option("--end", "end_date", default=None, help="History end date (used with --init-history)")
 @click.option("--cfg", "cfg_path", default=str(_DEFAULT_CFG), help="Path to thresholds.yaml")
 @click.option("--skip-sanxianhong", is_flag=True, help="Skip 三线红 step")
-@click.option("--refresh-blocks", is_flag=True, help="Refresh static caches (block_member_count + stock_pool) then exit")
+@click.option("--refresh-blocks", is_flag=True, help="Refresh stock_pool then exit")
 def main(
     db: str,
     target_date: str | None,
@@ -67,8 +67,7 @@ def main(
     init_tables(con)
 
     if refresh_blocks:
-        click.echo(f"[block_member_count] {refresh_block_member_count(con)} blocks")
-        click.echo(f"[stock_pool]         {refresh_stock_pool(con)} symbols")
+        click.echo(f"[stock_pool] {refresh_stock_pool(con)} symbols")
         con.close()
         return
 
@@ -82,10 +81,8 @@ def main(
                 "SELECT (CAST($1 AS DATE) - INTERVAL '2 years')::VARCHAR", [end_date]
             ).fetchone()[0]
 
-        click.echo(f"[stock_pool]       refreshing...")
+        click.echo(f"[stock_pool] refreshing...")
         click.echo(f"  {refresh_stock_pool(con)} symbols")
-        click.echo(f"[block_member_count] refreshing...")
-        click.echo(f"  {refresh_block_member_count(con)} blocks")
 
         click.echo(f"[block_daily_pct] history {start_date} → {end_date}")
         n = calc_block_daily_pct_history(con, start_date, end_date)
@@ -112,10 +109,8 @@ def main(
             click.echo("No target date and no data in DB", err=True)
             raise SystemExit(1)
 
-        click.echo(f"[stock_pool]       refreshing...")
+        click.echo(f"[stock_pool] refreshing...")
         click.echo(f"  {refresh_stock_pool(con)} symbols")
-        click.echo(f"[block_member_count] refreshing...")
-        click.echo(f"  {refresh_block_member_count(con)} blocks")
 
         click.echo(f"[block_daily_pct] {target_date}")
         n = calc_block_daily_pct(con, target_date)

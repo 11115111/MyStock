@@ -3,7 +3,6 @@
 Data flow:
   [static caches, refreshed on data sync]
     stock_pool          ← refresh_stock_pool()
-    block_member_count  ← refresh_block_member_count()
 
   [daily cache, refreshed once per trading day]
     block_daily_pct     ← calc_block_daily_pct() / calc_block_daily_pct_history()
@@ -36,7 +35,6 @@ SELECT
             ELSE (CASE WHEN bd.change_pct >= 9.7 THEN 1 ELSE 0 END)
         END)                                                                 AS limit_up_count
 FROM raw_tdx_blocks_member bm
-JOIN block_member_count    mc ON mc.block_code = bm.block_code
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
 JOIN stock_pool            sp ON sp.symbol = bm.stock_symbol
 JOIN raw_basic_daily       bd ON bd.symbol = bm.stock_symbol AND bd.date = $target_date
@@ -59,7 +57,6 @@ SELECT
             ELSE (CASE WHEN bd.change_pct >= 9.7 THEN 1 ELSE 0 END)
         END)                                                                 AS limit_up_count
 FROM raw_tdx_blocks_member bm
-JOIN block_member_count    mc ON mc.block_code = bm.block_code
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
 JOIN stock_pool            sp ON sp.symbol = bm.stock_symbol
 JOIN raw_basic_daily       bd ON bd.symbol = bm.stock_symbol
