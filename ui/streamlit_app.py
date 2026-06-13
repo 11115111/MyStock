@@ -465,103 +465,37 @@ def render_breadth(con_id: int, db_path: str) -> None:
         st.warning("block_breadth_daily 暂无数据，请先运行 `--init-history`")
         return
 
-    c1, c2 = st.columns([2, 4])
-    selected_date = c1.selectbox("日期", dates, index=0, key="bw_date")
-
-    df = load_breadth_l2(con_id, db_path, selected_date)
-    if df.empty:
-        st.info(f"{selected_date} 暂无市场宽度数据")
-        return
-
-    # 全市场宽度概览（按二级行业汇总 ≈ 全市场）
-    total_members = int(df["成员数"].sum())
-    total_nh = int(df["新高"].sum())
-    total_nl = int(df["新低"].sum())
-    total_above = int(df["MA20上方家数"].sum())
-    mkt_ma20 = total_above / total_members * 100 if total_members else 0
-    mkt_hl = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("二级行业数", len(df))
-    m2.metric("全市场新高", total_nh)
-    m3.metric("全市场新低", total_nl)
-    m4.metric("全市场 NH-NL", total_nh - total_nl)
-    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
-    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}（新高占新高+新低比）")
-
-    st.divider()
-
-    metric_choice = c2.selectbox(
-        "排行指标", ["MA20占比", "NH-NL", "HL指数MA10", "新高", "新低"],
-        index=0, key="bw_metric",
-    )
-
-    left, right = st.columns([3, 2])
-
-    with left:
-        st.subheader("二级行业宽度明细")
-        st.dataframe(
-            df.sort_values(metric_choice, ascending=False).reset_index(drop=True),
-            use_container_width=True,
-            height=560,
-            column_config=_BREADTH_COL_CFG,
-            hide_index=True,
-        )
-        csv = df.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button("下载 CSV", data=csv,
-                           file_name=f"breadth_l2_{selected_date}.csv", mime="text/csv")
-
-    with right:
-        st.subheader(f"按「{metric_choice}」排行")
-        top_n = st.slider("显示行业数", 5, 40, 20, key="bw_topn")
-        chart_df = (
-            df[["行业", metric_choice]]
-            .sort_values(metric_choice, ascending=False)
-            .head(top_n)
-            .set_index("行业")
-        )
-        st.bar_chart(chart_df, height=560)
-
-    st.divider()
-
-    # 热力表：日期 × 行业
-    st.subheader("宽度热力表（近 30 日 × 二级行业）")
-    hm_metric = st.selectbox(
-        "指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
+    # ── 热力表（置顶）──────────────────────────────────────────────────
+    hm_c1, hm_c2 = st.columns([2, 2])
+    hm_metric = hm_c1.selectbox(
+        "热力表指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
         index=0, key="bw_hm_metric",
     )
     pivot = load_breadth_heatmap(con_id, db_path, hm_metric)
-    if pivot.empty:
-        st.info("暂无数据")
-    else:
+    if not pivot.empty:
         import streamlit.components.v1 as components
         import matplotlib.cm as mcm
         import matplotlib.colors as mcolors
 
         t = pivot.T
-        t.columns = [d[5:] for d in t.columns]  # "2026-06-13" → "06-13"
-
+        t.columns = [d[5:] for d in t.columns]
         cmap_fn = mcm.get_cmap("coolwarm_r" if hm_metric == "新低" else "coolwarm")
-
-        # 计算每列的颜色（axis=0 per-column 归一）
-        colors = []  # shape: [n_rows][n_cols]
         vals = t.values.astype(float)
+        colors = []
         for ci in range(vals.shape[1]):
             col = vals[:, ci]
             vmin, vmax = np.nanmin(col), np.nanmax(col)
             denom = vmax - vmin if vmax > vmin else 1.0
             normed = (col - vmin) / denom
             colors.append([mcolors.to_hex(cmap_fn(float(v))) for v in normed])
-        # colors[ci][ri] → transpose to colors[ri][ci] for row-first layout
         colors_t = [[colors[ci][ri] for ci in range(len(colors))] for ri in range(len(t))]
 
-        rows_json  = json.dumps(t.index.tolist())
-        cols_json  = json.dumps(t.columns.tolist())
-        vals_json  = json.dumps([[int(v) if not np.isnan(v) else None for v in row] for row in vals])
+        rows_json   = json.dumps(t.index.tolist())
+        cols_json   = json.dumps(t.columns.tolist())
+        vals_json   = json.dumps([[int(v) if not np.isnan(v) else None for v in row] for row in vals])
         colors_json = json.dumps(colors_t)
         n_rows = len(t)
-        hdr_h = 70   # px reserved for 45° header
-        row_h = 18   # px per data row
+        hdr_h, row_h = 70, 18
         total_h = hdr_h + n_rows * row_h + 20
 
         html = f"""
@@ -583,21 +517,17 @@ def render_breadth(con_id: int, db_path: str) -> None:
   const cols   = {cols_json};
   const vals   = {vals_json};
   const colors = {colors_json};
-  let sortCol = cols.length - 1;  // default: newest date
+  let sortCol = cols.length - 1;
   let sortAsc = true;
-
   function contrast(hex) {{
     const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
     return (0.299*r + 0.587*g + 0.114*b) / 255 > 0.55 ? '#000' : '#fff';
   }}
-
   function render() {{
-    // header
     const hdr = document.getElementById('hdr-row');
     hdr.innerHTML = '';
     const th0 = document.createElement('th');
     th0.className = 'idx';
-    th0.textContent = '';
     hdr.appendChild(th0);
     cols.forEach((c, ci) => {{
       const th = document.createElement('th');
@@ -610,8 +540,6 @@ def render_breadth(con_id: int, db_path: str) -> None:
       }};
       hdr.appendChild(th);
     }});
-
-    // sort row indices
     const order = rows.map((_, i) => i).sort((a, b) => {{
       const av = vals[a][sortCol], bv = vals[b][sortCol];
       if (av===null && bv===null) return 0;
@@ -619,7 +547,6 @@ def render_breadth(con_id: int, db_path: str) -> None:
       if (bv===null) return -1;
       return sortAsc ? av - bv : bv - av;
     }});
-
     const tbody = document.getElementById('body');
     tbody.innerHTML = '';
     order.forEach(ri => {{
@@ -646,7 +573,46 @@ def render_breadth(con_id: int, db_path: str) -> None:
 
     st.divider()
 
-    # 单行业时间序列
+    # ── 全市场概览 + 明细表 ────────────────────────────────────────────
+    selected_date = hm_c2.selectbox("明细日期", dates, index=0, key="bw_date")
+    df = load_breadth_l2(con_id, db_path, selected_date)
+    if df.empty:
+        st.info(f"{selected_date} 暂无市场宽度数据")
+        return
+
+    total_members = int(df["成员数"].sum())
+    total_nh = int(df["新高"].sum())
+    total_nl = int(df["新低"].sum())
+    total_above = int(df["MA20上方家数"].sum())
+    mkt_ma20 = total_above / total_members * 100 if total_members else 0
+    mkt_hl = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("二级行业数", len(df))
+    m2.metric("全市场新高", total_nh)
+    m3.metric("全市场新低", total_nl)
+    m4.metric("全市场 NH-NL", total_nh - total_nl)
+    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
+    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}")
+
+    metric_choice = st.selectbox(
+        "明细排序", ["MA20占比", "NH-NL", "HL指数MA10", "新高", "新低"],
+        index=0, key="bw_metric",
+    )
+    st.dataframe(
+        df.sort_values(metric_choice, ascending=False).reset_index(drop=True),
+        use_container_width=True,
+        height=480,
+        column_config=_BREADTH_COL_CFG,
+        hide_index=True,
+    )
+    csv = df.to_csv(index=False, encoding="utf-8-sig")
+    st.download_button("下载 CSV", data=csv,
+                       file_name=f"breadth_l2_{selected_date}.csv", mime="text/csv")
+
+    st.divider()
+
+    # ── 单行业时间序列 ─────────────────────────────────────────────────
     st.subheader("行业宽度走势")
     industries = df.sort_values("MA20占比", ascending=False)["行业"].tolist()
     sel = st.selectbox("选择二级行业", industries, index=0, key="bw_series")
@@ -670,8 +636,6 @@ def render_breadth(con_id: int, db_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    st.title("📈 A股情绪周期看板")
-
     db_path = _db_path_from_args()
 
     with st.sidebar:
@@ -691,17 +655,36 @@ def main() -> None:
         st.error(f"无法连接数据库: {e}")
         return
 
+    _MODULES = {
+        "sanxianhong": ("📈", "三线红榜单"),
+        "breadth":     ("🌡️", "市场宽度"),
+    }
+    if "module" not in st.session_state:
+        st.session_state.module = "sanxianhong"
+
     with st.sidebar:
         st.divider()
-        st.header("模块")
-        module = st.radio(
-            "选择模块",
-            ["📈 三线红榜单", "🌡️ 市场宽度"],
-            index=0,
-            label_visibility="collapsed",
-        )
+        st.markdown("#### 模块导航")
+        for key, (icon, label) in _MODULES.items():
+            active = st.session_state.module == key
+            btn_style = (
+                "background:#1f77b4;color:#fff;border:none;border-radius:6px;"
+                "padding:8px 12px;width:100%;text-align:left;font-size:15px;cursor:pointer;margin-bottom:4px;"
+                if active else
+                "background:transparent;color:inherit;border:1px solid #ccc;border-radius:6px;"
+                "padding:8px 12px;width:100%;text-align:left;font-size:15px;cursor:pointer;margin-bottom:4px;"
+            )
+            if st.button(f"{icon} {label}", key=f"nav_{key}",
+                         use_container_width=True,
+                         type="primary" if active else "secondary"):
+                st.session_state.module = key
+                st.rerun()
 
-    if module == "📈 三线红榜单":
+    module = st.session_state.module
+    icon, label = _MODULES[module]
+    st.title(f"{icon} {label}")
+
+    if module == "sanxianhong":
         render_sanxianhong(con_id, db_path)
     else:
         render_breadth(con_id, db_path)
