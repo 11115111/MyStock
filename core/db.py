@@ -29,8 +29,8 @@ def refresh_stock_pool(con: duckdb.DuckDBPyConnection) -> int:
         FROM raw_symbol_class s
         JOIN raw_symbol_name n ON n.symbol = s.symbol
         WHERE s.class = 'stock'
-          AND s.symbol NOT LIKE '4%'
-          AND s.symbol NOT LIKE '9%'
+          AND RIGHT(s.symbol, 6) NOT LIKE '4%'
+          AND RIGHT(s.symbol, 6) NOT LIKE '9%'
     """)
     row = con.execute("SELECT COUNT(*) FROM stock_pool").fetchone()
     return row[0] if row else 0
