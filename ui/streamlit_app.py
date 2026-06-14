@@ -337,6 +337,208 @@ def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, end_date: 
 
 
 # ---------------------------------------------------------------------------
+# Data loaders — 情绪周期
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_sentiment_series(_con_id: int, db_path: str, days: int = 120) -> pd.DataFrame:
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT trade_date AS 日期,
+                   zt_count, dt_count, zbgc_count,
+                   ROUND(zt_seal_rate * 100, 1)  AS zt_seal_pct,
+                   ROUND(dt_seal_rate * 100, 1)  AS dt_seal_pct,
+                   max_consecutive, lianban_count,
+                   ROUND(prev_zt_return, 2)       AS prev_zt_ret,
+                   ROUND(prev_lianban_return, 2)  AS prev_lb_ret,
+                   ROUND(prev_zbgc_return, 2)     AS prev_zb_ret,
+                   break_count, break_risk_count,
+                   ROUND(break_risk_ratio * 100, 1) AS break_risk_pct
+            FROM sentiment_daily
+            ORDER BY trade_date DESC LIMIT {days}
+        """).df().iloc[::-1].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_pool_detail(_con_id: int, db_path: str, trade_date: str, pool: str) -> pd.DataFrame:
+    con = get_con(db_path)
+    table = {"涨停": "zt_pool_daily", "跌停": "dt_pool_daily", "炸板": "zbgc_pool_daily"}[pool]
+    try:
+        if pool == "涨停":
+            return con.execute("""
+                SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                       ROUND(pct_change,2) AS 涨跌幅,
+                       consecutive AS 连板数,
+                       open_count AS 炸板次数,
+                       first_seal_time AS 首封时间,
+                       last_seal_time AS 尾封时间,
+                       ROUND(seal_amount/1e8,2) AS 封板资金亿,
+                       zt_stat AS 涨停统计, industry AS 行业
+                FROM zt_pool_daily WHERE trade_date=$1
+                ORDER BY consecutive DESC, seal_amount DESC
+            """, [trade_date]).df()
+        if pool == "跌停":
+            return con.execute("""
+                SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                       ROUND(pct_change,2) AS 涨跌幅,
+                       consecutive_dt AS 连续跌停,
+                       open_count AS 开板次数,
+                       last_seal_time AS 尾封时间,
+                       ROUND(seal_amount/1e8,2) AS 封单资金亿,
+                       industry AS 行业
+                FROM dt_pool_daily WHERE trade_date=$1
+                ORDER BY consecutive_dt DESC, seal_amount DESC
+            """, [trade_date]).df()
+        # 炸板
+        return con.execute("""
+            SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                   ROUND(pct_change,2) AS 涨跌幅,
+                   open_count AS 炸板次数,
+                   first_seal_time AS 首封时间,
+                   ROUND(amplitude,1) AS 振幅,
+                   zt_stat AS 涨停统计, industry AS 行业
+            FROM zbgc_pool_daily WHERE trade_date=$1
+            ORDER BY open_count DESC
+        """, [trade_date]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_sentiment_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT trade_date FROM sentiment_daily ORDER BY trade_date DESC LIMIT 250"
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Module: 情绪周期
+# ---------------------------------------------------------------------------
+
+def render_sentiment(con_id: int, db_path: str) -> None:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    dates = load_sentiment_dates(con_id, db_path)
+    if not dates:
+        st.warning("sentiment_daily 暂无数据，请先同步股池并运行计算")
+        return
+
+    # 顶部日期选择（用于池详情）
+    import datetime
+    all_pool_dates = sorted({d for d in dates})
+    tc1, tc2 = st.columns([2, 5])
+    picked = tc1.date_input("查看日期（股池详情）", value=datetime.date.fromisoformat(dates[0]),
+                             min_value=datetime.date.fromisoformat(dates[-1]),
+                             max_value=datetime.date.fromisoformat(dates[0]), key="sent_date")
+    selected_date = picked.isoformat()
+    if selected_date not in {d for d in dates}:
+        valid = [d for d in sorted(dates) if d <= selected_date]
+        selected_date = valid[-1] if valid else dates[0]
+
+    df = load_sentiment_series(con_id, db_path)
+    if df.empty:
+        st.info("暂无情绪数据")
+        return
+
+    df["日期"] = pd.to_datetime(df["日期"])
+
+    # ── 统计概览（选中日当日）──────────────────────────────────────────
+    row = df[df["日期"].dt.date.astype(str) == selected_date]
+    if not row.empty:
+        r = row.iloc[0]
+        m1,m2,m3,m4,m5,m6,m7 = st.columns(7)
+        m1.metric("涨停", int(r["zt_count"]) if pd.notna(r["zt_count"]) else "-")
+        m2.metric("跌停", int(r["dt_count"]) if pd.notna(r["dt_count"]) else "-")
+        m3.metric("炸板", int(r["zbgc_count"]) if pd.notna(r["zbgc_count"]) else "-")
+        m4.metric("涨停封板率", f"{r['zt_seal_pct']:.1f}%" if pd.notna(r["zt_seal_pct"]) else "-")
+        m5.metric("最高连板", int(r["max_consecutive"]) if pd.notna(r["max_consecutive"]) else "-")
+        m6.metric("昨涨停今收益", f"{r['prev_zt_ret']:.2f}%" if pd.notna(r["prev_zt_ret"]) else "-")
+        m7.metric("断板风险率", f"{r['break_risk_pct']:.1f}%" if pd.notna(r["break_risk_pct"]) else "-")
+
+    st.divider()
+
+    # ── 时序图 ─────────────────────────────────────────────────────────
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        subplot_titles=("涨跌停家数", "封板率 %", "T+1 收益 %", "断板风险 %"),
+        vertical_spacing=0.07,
+        row_heights=[0.3, 0.2, 0.25, 0.25],
+    )
+    x = df["日期"]
+
+    # 1. 涨跌停家数
+    fig.add_trace(go.Bar(x=x, y=df["zt_count"],  name="涨停", marker_color="#d62728"), row=1, col=1)
+    fig.add_trace(go.Bar(x=x, y=-df["dt_count"], name="跌停", marker_color="#1f77b4"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["zbgc_count"], name="炸板",
+                             mode="lines", line=dict(color="orange", width=1.5)), row=1, col=1)
+
+    # 2. 封板率
+    fig.add_trace(go.Scatter(x=x, y=df["zt_seal_pct"], name="涨停封板率",
+                             mode="lines", line=dict(color="#d62728", width=1.5)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["dt_seal_pct"], name="跌停封板率",
+                             mode="lines", line=dict(color="#1f77b4", width=1.5, dash="dot")), row=2, col=1)
+
+    # 3. T+1 收益
+    fig.add_trace(go.Scatter(x=x, y=df["prev_zt_ret"], name="昨涨停今收益",
+                             mode="lines", line=dict(color="#d62728", width=1.5)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["prev_lb_ret"], name="昨连板今收益",
+                             mode="lines", line=dict(color="purple", width=1.5)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["prev_zb_ret"], name="昨炸板今收益",
+                             mode="lines", line=dict(color="orange", width=1.5)), row=3, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
+
+    # 4. 断板风险
+    fig.add_trace(go.Scatter(x=x, y=df["break_risk_pct"], name="断板风险%",
+                             mode="lines", fill="tozeroy",
+                             line=dict(color="crimson", width=1.5)), row=4, col=1)
+
+    fig.update_layout(height=700, showlegend=True,
+                      legend=dict(orientation="h", y=-0.05),
+                      margin=dict(l=40, r=20, t=40, b=40),
+                      barmode="relative")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── 当日股池详情 ──────────────────────────────────────────────────
+    st.subheader(f"股池详情 — {selected_date}")
+    tab_zt, tab_dt, tab_zb = st.tabs(["📈 涨停池", "📉 跌停池", "💥 炸板池"])
+
+    with tab_zt:
+        d = load_pool_detail(con_id, db_path, selected_date, "涨停")
+        if d.empty:
+            st.info("当日无涨停数据（需先同步股池）")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+    with tab_dt:
+        d = load_pool_detail(con_id, db_path, selected_date, "跌停")
+        if d.empty:
+            st.info("当日无跌停数据")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+    with tab_zb:
+        d = load_pool_detail(con_id, db_path, selected_date, "炸板")
+        if d.empty:
+            st.info("当日无炸板数据")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Shared column config
 # ---------------------------------------------------------------------------
 
@@ -678,6 +880,7 @@ def main() -> None:
     _MODULES = {
         "sanxianhong": ("📈", "三线红榜单"),
         "breadth":     ("🌡️", "市场宽度"),
+        "sentiment":   ("🔥", "情绪周期"),
     }
     if "module" not in st.session_state:
         st.session_state.module = "sanxianhong"
@@ -706,8 +909,10 @@ def main() -> None:
 
     if module == "sanxianhong":
         render_sanxianhong(con_id, db_path)
-    else:
+    elif module == "breadth":
         render_breadth(con_id, db_path)
+    else:
+        render_sentiment(con_id, db_path)
 
 
 if __name__ == "__main__":
