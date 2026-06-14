@@ -78,13 +78,13 @@ breaks AS (
            nxt.trade_date  AS break_date,
            nxt.idx         AS break_idx,
            z.close         AS base_price,
-           k_pre.close     AS pre_streak_price
+           rb_pre.close    AS pre_streak_price
     FROM zt_pool_daily z
     JOIN td cur ON cur.trade_date = z.trade_date
     JOIN td nxt ON nxt.idx = cur.idx + 1
     -- consecutive=N → 连板前一日在 td 里往回 N 格
     JOIN td pre ON pre.idx = cur.idx - z.consecutive
-    JOIN raw_kline_daily k_pre ON k_pre.symbol = z.symbol AND k_pre.date = pre.trade_date
+    JOIN raw_basic_daily rb_pre ON rb_pre.symbol = z.symbol AND rb_pre.date = pre.trade_date
     LEFT JOIN zt_pool_daily z2
            ON z2.symbol = z.symbol AND z2.trade_date = nxt.trade_date
     WHERE z.consecutive >= 2 AND z2.symbol IS NULL
