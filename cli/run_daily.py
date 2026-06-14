@@ -32,6 +32,8 @@ from core.rps_calculator import (
     calc_block_breadth_history,
 )
 from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
+from core.sentiment_sync import sync_pools, sync_pools_range
+from core.sentiment_calc import calc_sentiment, calc_sentiment_history
 
 _DEFAULT_CFG = Path(__file__).parent.parent / "config" / "thresholds.yaml"
 
@@ -52,6 +54,8 @@ def _load_cfg(path: Path) -> dict:
 @click.option("--skip-sanxianhong", is_flag=True, help="Skip 三线红 step")
 @click.option("--refresh-blocks", is_flag=True, help="Refresh stock_pool then exit")
 @click.option("--drop-tables", is_flag=True, help="Drop computed tables before --init-history (forces clean rebuild)")
+@click.option("--sync-sentiment", is_flag=True, help="Sync zt/dt/zbgc pools from Eastmoney (requires akshare + internet)")
+@click.option("--calc-sentiment", "do_calc_sentiment", is_flag=True, help="Compute sentiment_daily after pool sync")
 def main(
     db: str,
     target_date: str | None,
@@ -62,6 +66,8 @@ def main(
     skip_sanxianhong: bool,
     refresh_blocks: bool,
     drop_tables: bool,
+    sync_sentiment: bool,
+    do_calc_sentiment: bool,
 ) -> None:
     if drop_tables and not init_history:
         raise click.UsageError("--drop-tables requires --init-history")
@@ -118,6 +124,18 @@ def main(
             click.echo(f"[三线红] history {start_date} → {end_date} versions={versions}")
             n = calc_sanxianhong_history(con, start_date, end_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
+
+        if sync_sentiment:
+            ymd_start = start_date.replace("-", "")
+            ymd_end   = end_date.replace("-", "")
+            click.echo(f"[sentiment sync] {start_date} → {end_date} (requires akshare)")
+            r = sync_pools_range(con, ymd_start, ymd_end)
+            click.echo(f"  zt={r['zt']} dt={r['dt']} zbgc={r['zbgc']}")
+
+        if do_calc_sentiment:
+            click.echo(f"[sentiment calc] {start_date} → {end_date}")
+            n = calc_sentiment_history(con, start_date, end_date)
+            click.echo(f"  {n} rows into sentiment_daily")
     else:
         if not target_date:
             row = con.execute("SELECT MAX(date) FROM raw_kline_daily").fetchone()
@@ -150,6 +168,17 @@ def main(
             click.echo(f"[三线红] {target_date} versions={versions}")
             n = calc_sanxianhong(con, target_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
+
+        if sync_sentiment:
+            ymd = target_date.replace("-", "")
+            click.echo(f"[sentiment sync] {target_date} (requires akshare)")
+            r = sync_pools(con, ymd)
+            click.echo(f"  zt={r['zt']} dt={r['dt']} zbgc={r['zbgc']}")
+
+        if do_calc_sentiment:
+            click.echo(f"[sentiment calc] {target_date}")
+            n = calc_sentiment(con, target_date)
+            click.echo(f"  {n} rows into sentiment_daily")
 
     con.close()
     click.echo("done.")
