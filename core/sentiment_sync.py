@@ -27,14 +27,14 @@ def _to_prefixed(code: str) -> str:
     code = str(code).zfill(6)
     head = code[0]
     if head in ("6", "5"):
-        return "SH" + code
+        return "sh" + code
     if code.startswith("688") or code.startswith("900"):
-        return "SH" + code
+        return "sh" + code
     if head in ("0", "2", "3"):
-        return "SZ" + code
+        return "sz" + code
     if head in ("4", "8", "9"):
-        return "BJ" + code
-    return "SH" + code  # 兜底
+        return "bj" + code
+    return "sh" + code  # 兜底
 
 
 def _num(series):
