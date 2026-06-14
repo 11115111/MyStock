@@ -11,8 +11,7 @@
 - 断板：连板数>=2 的股票，次一交易日不在涨停池。
 - 断板风险：断板后 3 个交易日（含断板当日）内最低价，
   较断板前最后一连板收盘价的跌幅 >= 连板总涨幅的一半。
-  即：min_low < base_price - (base_price - pre_streak_price) / 2
-             = (base_price + pre_streak_price) / 2
+  即：min_low < base_price - (base_price - pre_streak_price) * 0.5
   pre_streak_price = 连板开始前一日收盘（raw_kline_daily）；
   连板第 N 天（consecutive=N）往前 N 格即为开板前收盘。
 """
@@ -102,7 +101,7 @@ break_low AS (
 break_agg AS (
     SELECT break_date AS trade_date,
            COUNT(*)                                                                         AS break_count,
-           COUNT(*) FILTER (WHERE min_low < (base_price + pre_streak_price) / 2.0)        AS break_risk_count
+           COUNT(*) FILTER (WHERE min_low < base_price - (base_price - pre_streak_price) * 0.5) AS break_risk_count
     FROM break_low
     GROUP BY break_date
 )
