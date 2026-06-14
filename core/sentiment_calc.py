@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import duckdb
 
-# 断板风险阈值：跌幅过半 = 0.5
-_BREAK_DROP = 0.5
+# 断板风险阈值：断板后3日最低价低于断板前收盘价的跌幅阈值
+# A股日限跌10%，3日最多跌~27%；用10%（1个跌停）作为有意义的风险线
+_BREAK_DROP = 0.10
 # 断板后观察窗口（交易日数，含断板当日）
 _BREAK_WINDOW = 3
 
@@ -49,6 +50,7 @@ zb_cnt AS (
     FROM zbgc_pool_daily GROUP BY trade_date
 ),
 -- 昨日涨停/连板 → 次日收益（按次日 change_pct 聚合）
+-- 用 td 映射下一交易日，同时要求 zt 日期本身也在 td 里（raw_basic_daily 覆盖范围内）
 zt_ret AS (
     SELECT nxt.trade_date AS trade_date,
            AVG(rb.change_pct)                                   AS prev_zt_return,
