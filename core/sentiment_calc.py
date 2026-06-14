@@ -9,12 +9,10 @@
 - 涨停封板率 = 涨停家数 / (涨停家数 + 炸板家数)。
 - 跌停封板率 = 跌停池中 open_count=0（未开板）占比（东财无独立跌停炸板池）。
 - 断板：连板数>=2 的股票，次一交易日不在涨停池。
-- 断板风险：断板后 3 个交易日（含断板当日）内最低价，
-  较断板前最后一连板收盘价的跌幅 >= 连板总涨幅的一半。
-  即：min_low < (base_price + pre_streak_price) / 2
-             ← 等价于：跌幅 >= (base_price - pre_streak_price) / 2（连板涨幅的一半）
-  pre_streak_price = 连板开始前一日收盘（raw_kline_daily）；
-  连板第 N 天（consecutive=N）往前 N 格即为开板前收盘。
+- 断板风险：以当日为观测日，统计过去 3 个交易日（含今日）内所有断板股，
+  取各股从断板日到今日的最低价，判断是否低于 (base_price + pre_streak_price) / 2，
+  等价于从 base_price 下跌幅度 >= 连板总涨幅的一半。
+  pre_streak_price = 连板开始前一日收盘（raw_basic_daily，consecutive=N → 往前 N 格）。
 """
 from __future__ import annotations
 
@@ -89,22 +87,37 @@ breaks AS (
            ON z2.symbol = z.symbol AND z2.trade_date = nxt.trade_date
     WHERE z.consecutive >= 2 AND z2.symbol IS NULL
 ),
-break_low AS (
-    SELECT b.symbol, b.break_date, b.base_price, b.pre_streak_price,
-           MIN(k.low) AS min_low
+-- break_obs：以观测日 obs_date 为基准，收集过去 BREAK_WINDOW 天内发生的断板事件
+break_obs AS (
+    SELECT obs.trade_date AS obs_date,
+           obs.idx        AS obs_idx,
+           b.symbol,
+           b.break_idx,
+           b.base_price,
+           b.pre_streak_price
     FROM breaks b
-    JOIN td w ON w.idx BETWEEN b.break_idx AND b.break_idx + {_BREAK_WINDOW - 1}
-    JOIN raw_kline_daily k ON k.symbol = b.symbol AND k.date = w.trade_date
-    GROUP BY b.symbol, b.break_date, b.base_price, b.pre_streak_price
+    JOIN td obs ON obs.idx BETWEEN b.break_idx AND b.break_idx + {_BREAK_WINDOW - 1}
+),
+-- 对每个 (obs_date, 断板事件)，取断板日到 obs_date 的最低价
+break_low AS (
+    SELECT bo.obs_date AS trade_date,
+           bo.symbol,
+           bo.base_price,
+           bo.pre_streak_price,
+           MIN(k.low) AS min_low
+    FROM break_obs bo
+    JOIN td w ON w.idx BETWEEN bo.break_idx AND bo.obs_idx
+    JOIN raw_kline_daily k ON k.symbol = bo.symbol AND k.date = w.trade_date
+    GROUP BY bo.obs_date, bo.symbol, bo.base_price, bo.pre_streak_price
 ),
 -- 断板风险：min_low < (base_price + pre_streak_price) / 2
 -- 等价于：跌幅 >= 连板总涨幅的一半
 break_agg AS (
-    SELECT break_date AS trade_date,
-           COUNT(*)                                                                         AS break_count,
-           COUNT(*) FILTER (WHERE min_low < (base_price + pre_streak_price) / 2.0)        AS break_risk_count
+    SELECT trade_date,
+           COUNT(*)                                                                  AS break_count,
+           COUNT(*) FILTER (WHERE min_low < (base_price + pre_streak_price) / 2.0) AS break_risk_count
     FROM break_low
-    GROUP BY break_date
+    GROUP BY trade_date
 )
 SELECT
     td.trade_date,
