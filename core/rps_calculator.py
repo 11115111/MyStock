@@ -33,6 +33,8 @@ SELECT
     COUNT(bd.symbol)                                                         AS member_count,
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
+            WHEN sp.name LIKE '%ST%'
+                THEN (CASE WHEN bd.change_pct >= 4.7 THEN 1 ELSE 0 END)
             WHEN bd.symbol LIKE '688%' OR bd.symbol LIKE '3%'
                 THEN (CASE WHEN bd.change_pct >= 19.7 THEN 1 ELSE 0 END)
             ELSE (CASE WHEN bd.change_pct >= 9.7 THEN 1 ELSE 0 END)
@@ -56,6 +58,8 @@ SELECT
     COUNT(bd.symbol)                                                         AS member_count,
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
+            WHEN sp.name LIKE '%ST%'
+                THEN (CASE WHEN bd.change_pct >= 4.7 THEN 1 ELSE 0 END)
             WHEN bd.symbol LIKE '688%' OR bd.symbol LIKE '3%'
                 THEN (CASE WHEN bd.change_pct >= 19.7 THEN 1 ELSE 0 END)
             ELSE (CASE WHEN bd.change_pct >= 9.7 THEN 1 ELSE 0 END)
