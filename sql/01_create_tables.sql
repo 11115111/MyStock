@@ -72,3 +72,65 @@ CREATE TABLE IF NOT EXISTS sanxianhong_daily (
     close_bfq DOUBLE, floatmv DOUBLE, change_pct DOUBLE, turnover DOUBLE,
     PRIMARY KEY (trade_date, symbol, formula_version)
 );
+
+-- ===========================================================================
+-- 情绪周期：涨跌停/炸板股池（来自东方财富，akshare 同步）
+-- symbol 统一存交易所前缀格式（SH/SZ/BJ + 6位），与 raw_* 表一致
+-- ===========================================================================
+
+-- 涨停股池 ak.stock_zt_pool_em
+CREATE TABLE IF NOT EXISTS zt_pool_daily (
+    trade_date    DATE    NOT NULL,
+    symbol        VARCHAR NOT NULL,
+    name          VARCHAR,
+    close         DOUBLE,             -- 最新价（收盘）
+    pct_change    DOUBLE,             -- 涨跌幅 %
+    amount        DOUBLE,             -- 成交额
+    floatmv       DOUBLE,             -- 流通市值
+    turnover      DOUBLE,             -- 换手率 %
+    seal_amount   DOUBLE,             -- 封板资金
+    first_seal_time VARCHAR,          -- 首次封板时间 HHMMSS
+    last_seal_time  VARCHAR,          -- 最后封板时间 HHMMSS
+    open_count    INTEGER,            -- 炸板次数
+    zt_stat       VARCHAR,            -- 涨停统计 n/m（m天内n次涨停）
+    consecutive   INTEGER,            -- 连板数
+    industry      VARCHAR,            -- 所属行业
+    PRIMARY KEY (trade_date, symbol)
+);
+
+-- 跌停股池 ak.stock_zt_pool_dtgc_em
+CREATE TABLE IF NOT EXISTS dt_pool_daily (
+    trade_date    DATE    NOT NULL,
+    symbol        VARCHAR NOT NULL,
+    name          VARCHAR,
+    close         DOUBLE,
+    pct_change    DOUBLE,
+    amount        DOUBLE,
+    floatmv       DOUBLE,
+    turnover      DOUBLE,
+    seal_amount   DOUBLE,             -- 板上成交额（封单资金）
+    last_seal_time VARCHAR,           -- 最后封板时间
+    consecutive_dt INTEGER,           -- 连续跌停天数
+    open_count    INTEGER,            -- 开板次数
+    industry      VARCHAR,
+    PRIMARY KEY (trade_date, symbol)
+);
+
+-- 炸板股池 ak.stock_zt_pool_zbgc_em
+CREATE TABLE IF NOT EXISTS zbgc_pool_daily (
+    trade_date    DATE    NOT NULL,
+    symbol        VARCHAR NOT NULL,
+    name          VARCHAR,
+    close         DOUBLE,
+    pct_change    DOUBLE,
+    amount        DOUBLE,
+    floatmv       DOUBLE,
+    turnover      DOUBLE,
+    speed         DOUBLE,             -- 涨速
+    first_seal_time VARCHAR,          -- 首次封板时间
+    open_count    INTEGER,            -- 炸板次数
+    zt_stat       VARCHAR,            -- 涨停统计
+    amplitude     DOUBLE,             -- 振幅 %
+    industry      VARCHAR,
+    PRIMARY KEY (trade_date, symbol)
+);
