@@ -134,3 +134,22 @@ CREATE TABLE IF NOT EXISTS zbgc_pool_daily (
     industry      VARCHAR,
     PRIMARY KEY (trade_date, symbol)
 );
+
+-- 情绪周期每日聚合：赚钱/亏钱效应指标
+CREATE TABLE IF NOT EXISTS sentiment_daily (
+    trade_date          DATE NOT NULL,
+    zt_count            INTEGER,   -- 涨停家数（收盘封住）
+    dt_count            INTEGER,   -- 跌停家数
+    zbgc_count          INTEGER,   -- 炸板家数
+    zt_seal_rate        DOUBLE,    -- 涨停封板率 = zt / (zt + zbgc)
+    dt_seal_rate        DOUBLE,    -- 跌停封板率 = dt 中开板次数=0 占比
+    max_consecutive     INTEGER,   -- 最高连板（高度板）
+    lianban_count       INTEGER,   -- 连板家数（连板数>=2）
+    prev_zt_return      DOUBLE,    -- 昨日涨停今日收益（昨收→今收均值 %）
+    prev_lianban_return DOUBLE,    -- 昨日连板今日收益 %
+    prev_zbgc_return    DOUBLE,    -- 昨日炸板今日收益 %
+    break_count         INTEGER,   -- 当日断板家数（连板>=2 次日未涨停）
+    break_risk_count    INTEGER,   -- 断板后3日内最低价较断板前收盘跌幅过半家数
+    break_risk_ratio    DOUBLE,    -- break_risk_count / break_count
+    PRIMARY KEY (trade_date)
+);
