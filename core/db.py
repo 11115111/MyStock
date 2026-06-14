@@ -16,9 +16,10 @@ def init_tables(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def refresh_stock_pool(con: duckdb.DuckDBPyConnection) -> int:
-    """Rebuild eligible stock pool: excludes B-shares (9x) and 三板 (4x).
+    """Rebuild eligible stock pool from raw_symbol_class (class='stock').
 
-    ST, delisted, and BSE (8x) stocks are kept so RPS ranks them fairly.
+    raw_symbol_name INNER JOIN already excludes 三板/B股/完全退市.
+    ST, BSE (8x) stocks are kept so RPS ranks them fairly.
     Sanxianhong applies its own ST/delisted filter at query time.
     Call after raw_symbol_name or raw_symbol_class is updated. Returns pool size.
     """
@@ -29,8 +30,6 @@ def refresh_stock_pool(con: duckdb.DuckDBPyConnection) -> int:
         FROM raw_symbol_class s
         JOIN raw_symbol_name n ON n.symbol = s.symbol
         WHERE s.class = 'stock'
-          AND RIGHT(s.symbol, 6) NOT LIKE '4%'
-          AND RIGHT(s.symbol, 6) NOT LIKE '9%'
     """)
     row = con.execute("SELECT COUNT(*) FROM stock_pool").fetchone()
     return row[0] if row else 0
