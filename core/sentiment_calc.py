@@ -9,7 +9,7 @@
 - 涨停封板率 = 涨停家数 / (涨停家数 + 炸板家数)。
 - 跌停封板率 = 跌停池中 open_count=0（未开板）占比（东财无独立跌停炸板池）。
 - 断板：连板数>=2 的股票，次一交易日不在涨停池。
-- 断板风险：以当日为观测日，统计过去 3 个交易日（含今日）内所有断板股，
+- 断板风险：以当日为观测日，统计过去 2 个交易日（不含今日）内断板的股票，
   取各股从断板日到今日的最低价，判断是否低于 (base_price + pre_streak_price) / 2，
   等价于从 base_price 下跌幅度 >= 连板总涨幅的一半。
   pre_streak_price = 连板开始前一日收盘（raw_basic_daily，consecutive=N → 往前 N 格）。
@@ -96,7 +96,7 @@ break_obs AS (
            b.base_price,
            b.pre_streak_price
     FROM breaks b
-    JOIN td obs ON obs.idx BETWEEN b.break_idx AND b.break_idx + {_BREAK_WINDOW - 1}
+    JOIN td obs ON obs.idx BETWEEN b.break_idx + 1 AND b.break_idx + {_BREAK_WINDOW - 1}
 ),
 -- 对每个 (obs_date, 断板事件)，取断板日到 obs_date 的最低价
 break_low AS (
