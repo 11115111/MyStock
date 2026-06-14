@@ -22,11 +22,6 @@ import duckdb
 # ---------------------------------------------------------------------------
 
 _SQL_BLOCK_DAILY_PCT_SINGLE = """
-WITH bd_with_preclose AS (
-    SELECT symbol, date, close, change_pct, floatmv, turnover,
-           LAG(close) OVER (PARTITION BY symbol ORDER BY date) AS preclose
-    FROM raw_basic_daily
-)
 INSERT OR REPLACE INTO block_daily_pct
 SELECT
     bd.date                                                                  AS trade_date,
@@ -49,16 +44,11 @@ SELECT
 FROM raw_tdx_blocks_member bm
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
 JOIN stock_pool            sp ON sp.symbol = bm.stock_symbol
-JOIN bd_with_preclose      bd ON bd.symbol = bm.stock_symbol AND bd.date = $target_date
+JOIN raw_basic_daily       bd ON bd.symbol = bm.stock_symbol AND bd.date = $target_date
 GROUP BY bd.date, bm.block_code, bi.block_name, bi.block_type
 """
 
 _SQL_BLOCK_DAILY_PCT_HISTORY = """
-WITH bd_with_preclose AS (
-    SELECT symbol, date, close, change_pct, floatmv, turnover,
-           LAG(close) OVER (PARTITION BY symbol ORDER BY date) AS preclose
-    FROM raw_basic_daily
-)
 INSERT OR REPLACE INTO block_daily_pct
 SELECT
     bd.date                                                                  AS trade_date,
@@ -81,7 +71,7 @@ SELECT
 FROM raw_tdx_blocks_member bm
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
 JOIN stock_pool            sp ON sp.symbol = bm.stock_symbol
-JOIN bd_with_preclose      bd ON bd.symbol = bm.stock_symbol
+JOIN raw_basic_daily       bd ON bd.symbol = bm.stock_symbol
 WHERE bd.date BETWEEN $start_date AND $end_date
 GROUP BY bd.date, bm.block_code, bi.block_name, bi.block_type
 """
