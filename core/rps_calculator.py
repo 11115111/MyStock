@@ -34,12 +34,12 @@ SELECT
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
             WHEN RIGHT(bd.symbol,6) LIKE '9%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.3  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.3  * 100) / 100 THEN 1 ELSE 0 END)
             WHEN RIGHT(bd.symbol,6) LIKE '688%' OR RIGHT(bd.symbol,6) LIKE '3%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.2  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.2  * 100) / 100 THEN 1 ELSE 0 END)
             WHEN sp.name LIKE '%ST%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.05 * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
-            ELSE      (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.1  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.05 * 100) / 100 THEN 1 ELSE 0 END)
+            ELSE      (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.1  * 100) / 100 THEN 1 ELSE 0 END)
         END)                                                                 AS limit_up_count
 FROM raw_tdx_blocks_member bm
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
@@ -61,12 +61,12 @@ SELECT
     SUM(CASE WHEN bd.change_pct > 0 THEN 1 ELSE 0 END)                      AS rising_count,
     SUM(CASE
             WHEN RIGHT(bd.symbol,6) LIKE '9%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.3  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.3  * 100) / 100 THEN 1 ELSE 0 END)
             WHEN RIGHT(bd.symbol,6) LIKE '688%' OR RIGHT(bd.symbol,6) LIKE '3%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.2  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.2  * 100) / 100 THEN 1 ELSE 0 END)
             WHEN sp.name LIKE '%ST%'
-                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.05 * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
-            ELSE      (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.1  * 100 + 0.5) / 100 THEN 1 ELSE 0 END)
+                THEN (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.05 * 100) / 100 THEN 1 ELSE 0 END)
+            ELSE      (CASE WHEN bd.close >= FLOOR(bd.preclose * 1.1  * 100) / 100 THEN 1 ELSE 0 END)
         END)                                                                 AS limit_up_count
 FROM raw_tdx_blocks_member bm
 JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
