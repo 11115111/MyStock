@@ -666,7 +666,7 @@ def render_sanxianhong(con_id: int, db_path: str) -> None:
 def render_breadth(con_id: int, db_path: str) -> None:
     import datetime
     import streamlit.components.v1 as components
-    import matplotlib.cm as mcm
+    import matplotlib as mpl
     import matplotlib.colors as mcolors
 
     dates = load_breadth_dates(con_id, db_path)
@@ -722,7 +722,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
     if not pivot.empty:
         t = pivot.T
         t.columns = [d[5:] for d in t.columns]
-        cmap_fn = mcm.get_cmap("coolwarm_r" if hm_metric == "新低" else "coolwarm")
+        cmap_fn = mpl.colormaps["coolwarm_r" if hm_metric == "新低" else "coolwarm"]
         vals = t.values.astype(float)
         colors = []
         for ci in range(vals.shape[1]):
