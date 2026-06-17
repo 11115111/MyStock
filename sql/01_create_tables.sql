@@ -156,18 +156,15 @@ CREATE TABLE IF NOT EXISTS sentiment_daily (
 
 -- 申万行业分类（一二三级）
 CREATE TABLE IF NOT EXISTS sw_industry (
-    code    VARCHAR PRIMARY KEY,
     name    VARCHAR NOT NULL,
-    level   INTEGER NOT NULL  -- 1 / 2 / 3
+    level   INTEGER NOT NULL,  -- 1 / 2 / 3
+    PRIMARY KEY (name, level)
 );
 
 -- 个股申万行业映射（扁平化，方便 JOIN）
 CREATE TABLE IF NOT EXISTS sw_industry_member (
     symbol      VARCHAR PRIMARY KEY,
-    sw_l1_code  VARCHAR,
     sw_l1_name  VARCHAR,
-    sw_l2_code  VARCHAR,
     sw_l2_name  VARCHAR,
-    sw_l3_code  VARCHAR,
     sw_l3_name  VARCHAR
 );
