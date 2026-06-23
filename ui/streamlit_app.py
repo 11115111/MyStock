@@ -911,24 +911,25 @@ def render_screen(con_id: int, db_path: str) -> None:
         return
 
     # ── 控件行 ────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    c1, c2 = st.columns([2, 1])
     selected_date = c1.selectbox("日期", dates, index=0, key="sc_date")
     mode = c2.radio("模式", ["strict", "loose"], horizontal=True, key="sc_mode")
 
     st.divider()
-    s1, s2, s3, s4 = st.columns(4)
-    rps50_min  = s1.slider("RPS50 ≥",  0, 99, 80, key="sc_rps50")
-    rps120_min = s2.slider("RPS120 ≥", 0, 99, 75, key="sc_rps120")
-    rps250_min = s3.slider("RPS250 ≥", 0, 99, 70, key="sc_rps250")
-    hhv_min    = s4.slider("近高比 ≥", 0.0, 1.0, 0.7, step=0.01, key="sc_hhv")
+    s1, s2, s3, s4, s5 = st.columns(5)
+    rps50_min  = s1.number_input("RPS50 ≥",  min_value=0, max_value=99, value=90, step=1, key="sc_rps50")
+    rps120_min = s2.number_input("RPS120 ≥", min_value=0, max_value=99, value=93, step=1, key="sc_rps120")
+    rps250_min = s3.number_input("RPS250 ≥", min_value=0, max_value=99, value=95, step=1, key="sc_rps250")
+    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0, value=0.7, step=0.01, key="sc_hhv")
+    run        = s5.button("查询", type="primary", use_container_width=True, key="sc_run")
 
     # ── 结果表格 ──────────────────────────────────────────────────────
-    df = load_screen(con_id, db_path, selected_date,
-                     rps50_min, rps120_min, rps250_min, hhv_min, mode)
-
-    st.caption(f"共 **{len(df)}** 只")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    if run:
+        df = load_screen(con_id, db_path, selected_date,
+                         int(rps50_min), int(rps120_min), int(rps250_min), float(hhv_min), mode)
+        st.caption(f"共 **{len(df)}** 只")
+        if not df.empty:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
