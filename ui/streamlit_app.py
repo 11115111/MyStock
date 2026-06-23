@@ -932,6 +932,10 @@ def render_screen(con_id: int, db_path: str) -> None:
         df = load_screen(con_id, db_path, selected_date,
                          float(rps50_min), float(rps120_min), float(rps250_min),
                          float(hhv_min), mode)
+        st.session_state["sc_result"] = df
+
+    df = st.session_state.get("sc_result")
+    if df is not None:
         cols = [c for c in df.columns if c != "在榜"]
         on_board  = df[df["在榜"] == True][cols].reset_index(drop=True)
         off_board = df[df["在榜"] == False][cols].reset_index(drop=True)
