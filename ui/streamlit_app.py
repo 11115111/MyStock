@@ -861,7 +861,7 @@ def render_breadth(con_id: int, db_path: str) -> None:
 def load_screen_dates(_con_id: int, db_path: str) -> list[str]:
     con = get_con(db_path)
     rows = con.execute(
-        "SELECT DISTINCT date FROM rps_stock_daily ORDER BY date DESC LIMIT 120"
+        "SELECT DISTINCT trade_date FROM rps_stock_daily ORDER BY trade_date DESC LIMIT 120"
     ).fetchall()
     return [str(r[0]) for r in rows]
 
@@ -897,8 +897,8 @@ def load_screen(
                ROUND(b.turnover,2) AS 换手率
         FROM rps_stock_daily r
         JOIN raw_symbol_name n ON n.symbol = r.symbol
-        LEFT JOIN v_stock_bfq b ON b.symbol = r.symbol AND b.date = r.date
-        WHERE r.date = $1 AND {where}
+        LEFT JOIN v_stock_bfq b ON b.symbol = r.symbol AND b.date = r.trade_date
+        WHERE r.trade_date = $1 AND {where}
           AND n.name NOT LIKE '%ST%' AND n.name NOT LIKE '%退%'
         ORDER BY r.rps50 DESC
     """
