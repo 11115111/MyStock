@@ -908,6 +908,45 @@ def load_screen(
     return con.execute(sql, [trade_date, mode]).df()
 
 
+@st.cache_data(ttl=60)
+def load_board_only(
+    _con_id: int, db_path: str, trade_date: str,
+    rps50_min: float, rps120_min: float, rps250_min: float,
+    hhv_ratio_min: float, mode: str,
+) -> pd.DataFrame:
+    """榜单有、但不满足自选条件的股票。"""
+    con = get_con(db_path)
+    if mode == "strict":
+        not_where = (
+            f"NOT (r.rps50 >= {rps50_min} AND r.rps120 >= {rps120_min} "
+            f"AND r.rps250 >= {rps250_min} AND r.h_div_hhv150 >= {hhv_ratio_min})"
+        )
+        hhv_col = "r.h_div_hhv150 AS 近高比150"
+    else:
+        not_where = (
+            f"NOT ((r.rps50 >= {rps50_min} OR r.rps120 >= {rps120_min} OR r.rps250 >= {rps250_min}) "
+            f"AND r.h_div_hhv250 >= {hhv_ratio_min})"
+        )
+        hhv_col = "r.h_div_hhv250 AS 近高比250"
+    sql = f"""
+        SELECT r.symbol, s.name AS 名称,
+               ROUND(r.rps50,2)  AS rps50,
+               ROUND(r.rps120,2) AS rps120,
+               ROUND(r.rps250,2) AS rps250,
+               {hhv_col},
+               ROUND(r.close_bfq,2) AS 现价,
+               ROUND(r.change_pct,2) AS 涨跌幅,
+               ROUND(r.floatmv/1e8,1) AS 流通市值亿,
+               ROUND(r.turnover,2) AS 换手率
+        FROM sanxianhong_daily s
+        JOIN rps_stock_daily r ON r.symbol = s.symbol AND r.trade_date = s.trade_date
+        WHERE s.trade_date = $1 AND s.formula_version = $2
+          AND {not_where}
+        ORDER BY r.rps50 DESC
+    """
+    return con.execute(sql, [trade_date, mode]).df()
+
+
 def render_screen(con_id: int, db_path: str) -> None:
     dates = load_screen_dates(con_id, db_path)
     if not dates:
@@ -932,15 +971,24 @@ def render_screen(con_id: int, db_path: str) -> None:
         df = load_screen(con_id, db_path, selected_date,
                          float(rps50_min), float(rps120_min), float(rps250_min),
                          float(hhv_min), mode)
+        df_board_only = load_board_only(con_id, db_path, selected_date,
+                                        float(rps50_min), float(rps120_min), float(rps250_min),
+                                        float(hhv_min), mode)
         st.session_state["sc_result"] = df
+        st.session_state["sc_board_only"] = df_board_only
 
     df = st.session_state.get("sc_result")
+    df_board_only = st.session_state.get("sc_board_only", pd.DataFrame())
     if df is not None:
         cols = [c for c in df.columns if c != "在榜"]
         on_board  = df[df["在榜"] == True][cols].reset_index(drop=True)
         off_board = df[df["在榜"] == False][cols].reset_index(drop=True)
 
-        t1, t2 = st.tabs([f"三线红榜单已收录 ({len(on_board)})", f"榜单外新增 ({len(off_board)})"])
+        t1, t2, t3 = st.tabs([
+            f"自选 ∩ 在榜 ({len(on_board)})",
+            f"自选独有 ({len(off_board)})",
+            f"榜单独有 ({len(df_board_only)})",
+        ])
         with t1:
             if on_board.empty:
                 st.info("无")
@@ -951,6 +999,11 @@ def render_screen(con_id: int, db_path: str) -> None:
                 st.info("无")
             else:
                 st.dataframe(off_board, use_container_width=True, hide_index=True)
+        with t3:
+            if df_board_only.empty:
+                st.info("无")
+            else:
+                st.dataframe(df_board_only, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
