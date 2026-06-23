@@ -854,6 +854,88 @@ def render_breadth(con_id: int, db_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 自选 RPS 筛选
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60)
+def load_screen_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    rows = con.execute(
+        "SELECT DISTINCT date FROM rps_stock_daily ORDER BY date DESC LIMIT 120"
+    ).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+@st.cache_data(ttl=60)
+def load_screen(
+    _con_id: int, db_path: str, trade_date: str,
+    rps50_min: int, rps120_min: int, rps250_min: int,
+    hhv_ratio_min: float, mode: str,
+) -> pd.DataFrame:
+    con = get_con(db_path)
+    if mode == "strict":
+        where = (
+            f"r.rps50 >= {rps50_min} AND r.rps120 >= {rps120_min} "
+            f"AND r.rps250 >= {rps250_min} AND r.h_div_hhv150 >= {hhv_ratio_min}"
+        )
+        hhv_col = "r.h_div_hhv150 AS 近高比150"
+    else:
+        where = (
+            f"(r.rps50 >= {rps50_min} OR r.rps120 >= {rps120_min} OR r.rps250 >= {rps250_min}) "
+            f"AND r.h_div_hhv250 >= {hhv_ratio_min}"
+        )
+        hhv_col = "r.h_div_hhv250 AS 近高比250"
+    sql = f"""
+        SELECT r.symbol, n.name AS 名称,
+               ROUND(r.rps50,1) AS rps50,
+               ROUND(r.rps120,1) AS rps120,
+               ROUND(r.rps250,1) AS rps250,
+               {hhv_col},
+               ROUND(b.close_bfq,2) AS 现价,
+               ROUND(b.change_pct,2) AS 涨跌幅,
+               ROUND(b.floatmv/1e8,1) AS 流通市值亿,
+               ROUND(b.turnover,2) AS 换手率
+        FROM rps_stock_daily r
+        JOIN raw_symbol_name n ON n.symbol = r.symbol
+        LEFT JOIN v_stock_bfq b ON b.symbol = r.symbol AND b.date = r.date
+        WHERE r.date = $1 AND {where}
+          AND n.name NOT LIKE '%ST%' AND n.name NOT LIKE '%退%'
+        ORDER BY r.rps50 DESC
+    """
+    try:
+        return con.execute(sql, [trade_date]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+def render_screen(con_id: int, db_path: str) -> None:
+    dates = load_screen_dates(con_id, db_path)
+    if not dates:
+        st.warning("rps_stock_daily 暂无数据，请先运行 `--init-history`")
+        return
+
+    # ── 控件行 ────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    selected_date = c1.selectbox("日期", dates, index=0, key="sc_date")
+    mode = c2.radio("模式", ["strict", "loose"], horizontal=True, key="sc_mode")
+
+    st.divider()
+    s1, s2, s3, s4 = st.columns(4)
+    rps50_min  = s1.slider("RPS50 ≥",  0, 99, 80, key="sc_rps50")
+    rps120_min = s2.slider("RPS120 ≥", 0, 99, 75, key="sc_rps120")
+    rps250_min = s3.slider("RPS250 ≥", 0, 99, 70, key="sc_rps250")
+    hhv_min    = s4.slider("近高比 ≥", 0.0, 1.0, 0.7, step=0.01, key="sc_hhv")
+
+    # ── 结果表格 ──────────────────────────────────────────────────────
+    df = load_screen(con_id, db_path, selected_date,
+                     rps50_min, rps120_min, rps250_min, hhv_min, mode)
+
+    st.caption(f"共 **{len(df)}** 只")
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
 
@@ -879,6 +961,7 @@ def main() -> None:
 
     _MODULES = {
         "sanxianhong": ("📈", "三线红榜单"),
+        "screen":      ("🔍", "自选筛选"),
         "breadth":     ("🌡️", "市场宽度"),
         "sentiment":   ("🔥", "情绪周期"),
     }
@@ -909,6 +992,8 @@ def main() -> None:
 
     if module == "sanxianhong":
         render_sanxianhong(con_id, db_path)
+    elif module == "screen":
+        render_screen(con_id, db_path)
     elif module == "breadth":
         render_breadth(con_id, db_path)
     else:
