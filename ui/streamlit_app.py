@@ -924,7 +924,7 @@ def render_screen(con_id: int, db_path: str) -> None:
     rps50_min  = s1.number_input("RPS50 ≥",  min_value=0.0, max_value=99.0, value=90.0, step=0.1, format="%.1f", key="sc_rps50")
     rps120_min = s2.number_input("RPS120 ≥", min_value=0.0, max_value=99.0, value=93.0, step=0.1, format="%.1f", key="sc_rps120")
     rps250_min = s3.number_input("RPS250 ≥", min_value=0.0, max_value=99.0, value=95.0, step=0.1, format="%.1f", key="sc_rps250")
-    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0,  value=0.7,  step=0.01, format="%.2f", key="sc_hhv")
+    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0,  value=0.85, step=0.01, format="%.2f", key="sc_hhv")
     run        = s5.button("查询", type="primary", use_container_width=True, key="sc_run")
 
     # ── 结果分组显示 ──────────────────────────────────────────────────
