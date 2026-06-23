@@ -869,7 +869,7 @@ def load_screen_dates(_con_id: int, db_path: str) -> list[str]:
 @st.cache_data(ttl=60)
 def load_screen(
     _con_id: int, db_path: str, trade_date: str,
-    rps50_min: int, rps120_min: int, rps250_min: int,
+    rps50_min: float, rps120_min: float, rps250_min: float,
     hhv_ratio_min: float, mode: str,
 ) -> pd.DataFrame:
     con = get_con(db_path)
@@ -887,21 +887,25 @@ def load_screen(
         hhv_col = "r.h_div_hhv250 AS 近高比250"
     sql = f"""
         SELECT r.symbol, n.name AS 名称,
-               ROUND(r.rps50,1) AS rps50,
-               ROUND(r.rps120,1) AS rps120,
-               ROUND(r.rps250,1) AS rps250,
+               ROUND(r.rps50,2)  AS rps50,
+               ROUND(r.rps120,2) AS rps120,
+               ROUND(r.rps250,2) AS rps250,
                {hhv_col},
                ROUND(r.close_bfq,2) AS 现价,
                ROUND(r.change_pct,2) AS 涨跌幅,
                ROUND(r.floatmv/1e8,1) AS 流通市值亿,
-               ROUND(r.turnover,2) AS 换手率
+               ROUND(r.turnover,2) AS 换手率,
+               (s.symbol IS NOT NULL) AS 在榜
         FROM rps_stock_daily r
         JOIN raw_symbol_name n ON n.symbol = r.symbol
+        LEFT JOIN sanxianhong_daily s
+               ON s.symbol = r.symbol AND s.trade_date = r.trade_date
+              AND s.formula_version = $2
         WHERE r.trade_date = $1 AND {where}
           AND n.name NOT LIKE '%ST%' AND n.name NOT LIKE '%退%'
-        ORDER BY r.rps50 DESC
+        ORDER BY 在榜 DESC, r.rps50 DESC
     """
-    return con.execute(sql, [trade_date]).df()
+    return con.execute(sql, [trade_date, mode]).df()
 
 
 def render_screen(con_id: int, db_path: str) -> None:
@@ -917,19 +921,32 @@ def render_screen(con_id: int, db_path: str) -> None:
 
     st.divider()
     s1, s2, s3, s4, s5 = st.columns(5)
-    rps50_min  = s1.number_input("RPS50 ≥",  min_value=0, max_value=99, value=90, step=1, key="sc_rps50")
-    rps120_min = s2.number_input("RPS120 ≥", min_value=0, max_value=99, value=93, step=1, key="sc_rps120")
-    rps250_min = s3.number_input("RPS250 ≥", min_value=0, max_value=99, value=95, step=1, key="sc_rps250")
-    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0, value=0.7, step=0.01, key="sc_hhv")
+    rps50_min  = s1.number_input("RPS50 ≥",  min_value=0.0, max_value=99.0, value=90.0, step=0.1, format="%.1f", key="sc_rps50")
+    rps120_min = s2.number_input("RPS120 ≥", min_value=0.0, max_value=99.0, value=93.0, step=0.1, format="%.1f", key="sc_rps120")
+    rps250_min = s3.number_input("RPS250 ≥", min_value=0.0, max_value=99.0, value=95.0, step=0.1, format="%.1f", key="sc_rps250")
+    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0,  value=0.7,  step=0.01, format="%.2f", key="sc_hhv")
     run        = s5.button("查询", type="primary", use_container_width=True, key="sc_run")
 
-    # ── 结果表格 ──────────────────────────────────────────────────────
+    # ── 结果分组显示 ──────────────────────────────────────────────────
     if run:
         df = load_screen(con_id, db_path, selected_date,
-                         int(rps50_min), int(rps120_min), int(rps250_min), float(hhv_min), mode)
-        st.caption(f"共 **{len(df)}** 只")
-        if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+                         float(rps50_min), float(rps120_min), float(rps250_min),
+                         float(hhv_min), mode)
+        cols = [c for c in df.columns if c != "在榜"]
+        on_board  = df[df["在榜"] == True][cols].reset_index(drop=True)
+        off_board = df[df["在榜"] == False][cols].reset_index(drop=True)
+
+        t1, t2 = st.tabs([f"三线红榜单已收录 ({len(on_board)})", f"榜单外新增 ({len(off_board)})"])
+        with t1:
+            if on_board.empty:
+                st.info("无")
+            else:
+                st.dataframe(on_board, use_container_width=True, hide_index=True)
+        with t2:
+            if off_board.empty:
+                st.info("无")
+            else:
+                st.dataframe(off_board, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
