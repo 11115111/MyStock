@@ -891,21 +891,17 @@ def load_screen(
                ROUND(r.rps120,1) AS rps120,
                ROUND(r.rps250,1) AS rps250,
                {hhv_col},
-               ROUND(b.close_bfq,2) AS 现价,
-               ROUND(b.change_pct,2) AS 涨跌幅,
-               ROUND(b.floatmv/1e8,1) AS 流通市值亿,
-               ROUND(b.turnover,2) AS 换手率
+               ROUND(r.close_bfq,2) AS 现价,
+               ROUND(r.change_pct,2) AS 涨跌幅,
+               ROUND(r.floatmv/1e8,1) AS 流通市值亿,
+               ROUND(r.turnover,2) AS 换手率
         FROM rps_stock_daily r
         JOIN raw_symbol_name n ON n.symbol = r.symbol
-        LEFT JOIN v_stock_bfq b ON b.symbol = r.symbol AND b.date = r.trade_date
         WHERE r.trade_date = $1 AND {where}
           AND n.name NOT LIKE '%ST%' AND n.name NOT LIKE '%退%'
         ORDER BY r.rps50 DESC
     """
-    try:
-        return con.execute(sql, [trade_date]).df()
-    except Exception:
-        return pd.DataFrame()
+    return con.execute(sql, [trade_date]).df()
 
 
 def render_screen(con_id: int, db_path: str) -> None:
