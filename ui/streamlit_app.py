@@ -1088,15 +1088,15 @@ def render_data_mgmt(db_path: str) -> None:
     st.markdown("#### 1. tdx2db 行情数据")
 
     # ── vipdoc 目录选择 ───────────────────────────────────────────────
-    vipdoc = st.session_state.get("dm_vipdoc", "")
     pc1, pc2 = st.columns([1, 3])
     if pc1.button("📂 选择 vipdoc 目录", use_container_width=True, key="dm_pick"):
         picked = _pick_directory()
         if picked:
+            # 直接写 widget 的 state key（keyed widget 忽略 value=，需改 state）
             st.session_state["dm_vipdoc"] = picked
-            vipdoc = picked
-    vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）", value=vipdoc,
-                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc_text")
+            st.rerun()
+    vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）",
+                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc")
 
     c1, c2 = st.columns(2)
     if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init"):
