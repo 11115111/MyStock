@@ -1116,11 +1116,29 @@ def render_data_mgmt(db_path: str) -> None:
         if not vipdoc:
             st.warning("请先选择 vipdoc 目录")
         else:
-            _release_db_connections(cur_db)
-            _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+            st.session_state["dm_init_pending"] = True
     if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron"):
         _release_db_connections(cur_db)
         _run_command([tdx_exe, "cron", "--dburi", dburi])
+
+    # ── 初始化二次确认 ─────────────────────────────────────────────────
+    if st.session_state.get("dm_init_pending"):
+        st.warning(f"⚠️ 初始化会**删除并重建**数据库 `{cur_db}`，现有数据将全部丢失。确认继续？")
+        ic1, ic2 = st.columns(2)
+        if ic1.button("✅ 确认初始化", type="primary", use_container_width=True, key="dm_init_ok"):
+            st.session_state["dm_init_pending"] = False
+            _release_db_connections(cur_db)
+            try:
+                if os.path.exists(cur_db):
+                    os.remove(cur_db)
+                    st.info(f"已删除旧数据库 {cur_db}")
+            except Exception as e:
+                st.error(f"删除旧数据库失败（可能仍被占用）：{e}")
+            else:
+                _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+        if ic2.button("取消", use_container_width=True, key="dm_init_cancel"):
+            st.session_state["dm_init_pending"] = False
+            st.rerun()
 
     st.divider()
     st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
