@@ -1149,6 +1149,9 @@ def render_data_mgmt(db_path: str) -> None:
     # 首次进入时把磁盘里记忆的值灌入 session_state
     if "dm_vipdoc" not in st.session_state:
         st.session_state["dm_vipdoc"] = _load_vipdoc()
+    # 目录浏览器选定的值（widget 实例化前写入才合法）
+    if "dm_vipdoc_pending" in st.session_state:
+        st.session_state["dm_vipdoc"] = st.session_state.pop("dm_vipdoc_pending")
     tdx_exe = os.path.join(repo_root, "tdx2db.exe")
     # tdx2db 的 --dburi 只接受正斜杠路径
     dburi = f"duckdb://{cur_db.replace(chr(92), '/')}"
@@ -1190,7 +1193,8 @@ def render_data_mgmt(db_path: str) -> None:
             st.caption("浏览并选定 vipdoc 目录")
 
             def _on_select(path: str) -> None:
-                st.session_state["dm_vipdoc"] = path
+                # 不能直接改已实例化的 widget state，用 pending 键，下个 run 再写入
+                st.session_state["dm_vipdoc_pending"] = path
                 _save_vipdoc(path)
                 st.session_state["dm_browse_open"] = False
                 st.rerun()
