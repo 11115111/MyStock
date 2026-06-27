@@ -1007,6 +1007,89 @@ def render_screen(con_id: int, db_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 数据管理：tdx2db 初始化/更新 + 本项目数据初始化/刷新
+# ---------------------------------------------------------------------------
+
+def _run_command(cmd: list[str], cwd: str | None = None) -> None:
+    """运行命令并把输出实时打到 UI。"""
+    import subprocess
+
+    st.code(" ".join(cmd), language="bash")
+    placeholder = st.empty()
+    lines: list[str] = []
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+    except FileNotFoundError as e:
+        st.error(f"无法启动: {e}")
+        return
+
+    for line in proc.stdout:  # type: ignore[union-attr]
+        lines.append(line.rstrip("\n"))
+        placeholder.code("\n".join(lines[-200:]))
+    proc.wait()
+    if proc.returncode == 0:
+        st.success(f"完成 (exit {proc.returncode})")
+    else:
+        st.error(f"失败 (exit {proc.returncode})")
+
+
+def _release_db_connections() -> None:
+    """释放 streamlit 持有的只读连接，避免 DuckDB 写锁冲突。"""
+    try:
+        get_con.clear()
+    except Exception:
+        pass
+
+
+def render_data_mgmt(db_path: str) -> None:
+    import os
+
+    app_dir = str(Path(__file__).parent)
+    repo_root = str(Path(__file__).parent.parent.parent)
+
+    st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
+
+    # ── 路径配置 ──────────────────────────────────────────────────────
+    with st.expander("路径配置", expanded=True):
+        default_exe = os.path.join(repo_root, "tdx2db.exe")
+        tdx_exe = st.text_input("tdx2db.exe 路径", value=default_exe, key="dm_exe")
+        cur_db  = st.text_input("数据库文件路径", value=db_path or "", key="dm_db")
+        vipdoc  = st.text_input("通达信 vipdoc 目录（初始化用）",
+                                placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc")
+
+    dburi = f"duckdb://{cur_db}"
+
+    st.divider()
+    st.markdown("#### 1. tdx2db 行情数据")
+    c1, c2 = st.columns(2)
+    if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init"):
+        if not vipdoc:
+            st.warning("请先填写 vipdoc 目录")
+        else:
+            _release_db_connections()
+            _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+    if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron"):
+        _release_db_connections()
+        _run_command([tdx_exe, "cron", "--dburi", dburi])
+
+    st.divider()
+    st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
+    d1, d2 = st.columns(2)
+    py = sys.executable
+    if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init"):
+        _release_db_connections()
+        _run_command([py, "-m", "rps.cli.run_daily", "--db", cur_db, "--init-history"],
+                     cwd=repo_root)
+    if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily"):
+        _release_db_connections()
+        _run_command([py, "-m", "rps.cli.run_daily", "--db", cur_db], cwd=repo_root)
+
+
+# ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
 
@@ -1023,18 +1106,21 @@ def main() -> None:
             st.info("请输入数据库路径或通过 `-- --db /path/to/db` 启动")
             return
 
+    # 数据库可能尚未初始化（首次使用），连接失败时仍允许进入数据管理模块
+    con_id: int | None = None
+    con_err: str | None = None
     try:
         con = get_con(db_path)
         con_id = id(con)
     except Exception as e:
-        st.error(f"无法连接数据库: {e}")
-        return
+        con_err = str(e)
 
     _MODULES = {
         "sanxianhong": ("📈", "三线红榜单"),
         "screen":      ("🔍", "自选筛选"),
         "breadth":     ("🌡️", "市场宽度"),
         # "sentiment":   ("🔥", "情绪周期"),  # 暂时隐藏
+        "data_mgmt":   ("⚙️", "数据管理"),
     }
     if "module" not in st.session_state:
         st.session_state.module = "sanxianhong"
@@ -1060,6 +1146,15 @@ def main() -> None:
     module = st.session_state.module
     icon, label = _MODULES[module]
     st.title(f"{icon} {label}")
+
+    if module == "data_mgmt":
+        render_data_mgmt(db_path)
+        return
+
+    if con_id is None:
+        st.error(f"无法连接数据库: {con_err}")
+        st.info("如果是首次使用，请先到 ⚙️ 数据管理 初始化数据。")
+        return
 
     if module == "sanxianhong":
         render_sanxianhong(con_id, db_path)
