@@ -1048,8 +1048,7 @@ def _release_db_connections() -> None:
 def render_data_mgmt(db_path: str) -> None:
     import os
 
-    app_dir = str(Path(__file__).parent)
-    repo_root = str(Path(__file__).parent.parent.parent)
+    repo_root = str(Path(__file__).parent.parent)  # ui/ 的上一级即仓库根
 
     st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
 
@@ -1082,11 +1081,11 @@ def render_data_mgmt(db_path: str) -> None:
     py = sys.executable
     if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init"):
         _release_db_connections()
-        _run_command([py, "-m", "rps.cli.run_daily", "--db", cur_db, "--init-history"],
+        _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
                      cwd=repo_root)
     if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily"):
         _release_db_connections()
-        _run_command([py, "-m", "rps.cli.run_daily", "--db", cur_db], cwd=repo_root)
+        _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
 
 
 # ---------------------------------------------------------------------------
