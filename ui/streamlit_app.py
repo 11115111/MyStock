@@ -1010,8 +1010,8 @@ def render_screen(con_id: int, db_path: str) -> None:
 # 数据管理：tdx2db 初始化/更新 + 本项目数据初始化/刷新
 # ---------------------------------------------------------------------------
 
-def _run_command(cmd: list[str], cwd: str | None = None) -> None:
-    """运行命令并把输出实时打到 UI。"""
+def _run_command(cmd: list[str], cwd: str | None = None) -> bool:
+    """运行命令并把输出实时打到 UI。返回是否成功。"""
     import subprocess
 
     st.code(" ".join(cmd), language="bash")
@@ -1025,7 +1025,7 @@ def _run_command(cmd: list[str], cwd: str | None = None) -> None:
         )
     except FileNotFoundError as e:
         st.error(f"无法启动: {e}")
-        return
+        return False
 
     for line in proc.stdout:  # type: ignore[union-attr]
         lines.append(line.rstrip("\n"))
@@ -1033,8 +1033,9 @@ def _run_command(cmd: list[str], cwd: str | None = None) -> None:
     proc.wait()
     if proc.returncode == 0:
         st.success(f"完成 (exit {proc.returncode})")
-    else:
-        st.error(f"失败 (exit {proc.returncode})")
+        return True
+    st.error(f"失败 (exit {proc.returncode})")
+    return False
 
 
 def _release_db_connections(db_path: str | None = None) -> None:
@@ -1153,19 +1154,16 @@ def render_data_mgmt(db_path: str) -> None:
         if dc2.button("取消", use_container_width=True, key="dm_init_cancel"):
             st.rerun()
 
-    c1, c2 = st.columns(2)
-    if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init", disabled=running):
+    if st.button("🆕 初始化行情（首次全量，删除重建）", use_container_width=True,
+                 key="dm_tdx_init", disabled=running):
         if not vipdoc:
             st.warning("请先选择 vipdoc 目录")
         else:
             _confirm_init_dialog()
-    if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron", disabled=running):
-        st.session_state["dm_running"] = True
-        st.session_state["dm_task"] = "cron"
-        st.rerun()
 
     st.divider()
     st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
+    st.caption("下列操作会先用 tdx2db 增量更新行情，再重算本项目数据。")
     d1, d2 = st.columns(2)
     if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init", disabled=running):
         st.session_state["dm_running"] = True
@@ -1193,13 +1191,18 @@ def render_data_mgmt(db_path: str) -> None:
                     removed = False
                 if removed:
                     _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
-            elif task == "cron":
-                _run_command([tdx_exe, "cron", "--dburi", dburi])
-            elif task == "rps_init":
-                _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
-                             cwd=repo_root)
-            elif task == "rps_daily":
-                _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+            elif task in ("rps_init", "rps_daily"):
+                # 先增量更新行情，成功后再重算本项目数据
+                st.markdown("**① tdx2db 增量更新行情**")
+                if _run_command([tdx_exe, "cron", "--dburi", dburi]):
+                    st.markdown("**② 重算本项目数据**")
+                    if task == "rps_init":
+                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
+                                     cwd=repo_root)
+                    else:
+                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+                else:
+                    st.error("行情更新失败，已中止本项目数据计算。")
         finally:
             st.session_state["dm_running"] = False
             st.session_state.pop("dm_task", None)
