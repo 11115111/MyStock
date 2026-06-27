@@ -1119,17 +1119,21 @@ def render_data_mgmt(db_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import os
+
     db_path = _db_path_from_args()
+    if not db_path:
+        # 默认数据库：仓库 data/tdx.db，无需用户选择
+        repo_root = str(Path(__file__).parent.parent)
+        os.makedirs(os.path.join(repo_root, "data"), exist_ok=True)
+        db_path = os.path.join(repo_root, "data", "tdx.db")
 
     with st.sidebar:
         st.header("数据源")
-        if db_path:
+        if os.path.exists(db_path):
             st.success(f"已连接: `{db_path}`")
         else:
-            db_path = st.text_input("DuckDB 文件路径", placeholder="/path/to/your.duckdb")
-        if not db_path:
-            st.info("请输入数据库路径或通过 `-- --db /path/to/db` 启动")
-            return
+            st.warning(f"数据库未初始化\n\n`{db_path}`\n\n请到 ⚙️ 数据管理 初始化")
 
     # 数据库可能尚未初始化（首次使用），连接失败时仍允许进入数据管理模块
     con_id: int | None = None
