@@ -1178,6 +1178,10 @@ def render_data_mgmt(db_path: str) -> None:
     task = st.session_state.get("dm_task")
     if running and task:
         st.info(f"⏳ 正在执行：{task}，请勿关闭页面…")
+        # 先插一次渲染让弹窗关闭、按钮置灰，再跑阻塞命令
+        if not st.session_state.get("dm_started"):
+            st.session_state["dm_started"] = True
+            st.rerun()
         try:
             _release_db_connections(cur_db)
             if task == "init":
@@ -1206,6 +1210,7 @@ def render_data_mgmt(db_path: str) -> None:
         finally:
             st.session_state["dm_running"] = False
             st.session_state.pop("dm_task", None)
+            st.session_state.pop("dm_started", None)
         # 不自动 rerun，保留命令输出；用按钮恢复界面（解禁其它按钮）
         st.button("✅ 完成，返回", type="primary", key="dm_done")
 
