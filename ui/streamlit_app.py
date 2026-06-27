@@ -1166,13 +1166,24 @@ def render_data_mgmt(db_path: str) -> None:
     st.caption("下列操作会先用 tdx2db 增量更新行情，再重算本项目数据。")
     d1, d2 = st.columns(2)
     if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init", disabled=running):
-        st.session_state["dm_running"] = True
-        st.session_state["dm_task"] = "rps_init"
-        st.rerun()
+        st.session_state["dm_confirm_rps_init"] = True
     if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily", disabled=running):
         st.session_state["dm_running"] = True
         st.session_state["dm_task"] = "rps_daily"
         st.rerun()
+
+    # 初始化历史内联二次确认
+    if st.session_state.get("dm_confirm_rps_init") and not running:
+        st.warning("⚠️ 初始化历史会**重算并覆盖**本项目所有数据（RPS / 三线红 / 市场宽度），耗时较长。")
+        rc1, rc2 = st.columns(2)
+        if rc1.button("✅ 确认初始化历史", type="primary", use_container_width=True, key="dm_rps_init_ok"):
+            st.session_state.pop("dm_confirm_rps_init", None)
+            st.session_state["dm_running"] = True
+            st.session_state["dm_task"] = "rps_init"
+            st.rerun()
+        if rc2.button("取消", use_container_width=True, key="dm_rps_init_cancel"):
+            st.session_state.pop("dm_confirm_rps_init", None)
+            st.rerun()
 
     # ── 任务执行（按钮已禁用状态下运行）────────────────────────────────
     task = st.session_state.get("dm_task")
