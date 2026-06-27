@@ -1034,7 +1034,7 @@ def main() -> None:
         "sanxianhong": ("📈", "三线红榜单"),
         "screen":      ("🔍", "自选筛选"),
         "breadth":     ("🌡️", "市场宽度"),
-        "sentiment":   ("🔥", "情绪周期"),
+        # "sentiment":   ("🔥", "情绪周期"),  # 暂时隐藏
     }
     if "module" not in st.session_state:
         st.session_state.module = "sanxianhong"
@@ -1067,7 +1067,7 @@ def main() -> None:
         render_screen(con_id, db_path)
     elif module == "breadth":
         render_breadth(con_id, db_path)
-    else:
+    elif module == "sentiment":
         render_sentiment(con_id, db_path)
 
 
