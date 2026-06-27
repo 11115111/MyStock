@@ -1097,19 +1097,23 @@ def render_data_mgmt(db_path: str) -> None:
     st.caption(f"数据库：`{cur_db}`")
     st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
 
+    py = sys.executable
+    running = bool(st.session_state.get("dm_running"))
+
     st.divider()
     st.markdown("#### 1. tdx2db 行情数据")
 
     # ── vipdoc 目录选择 ───────────────────────────────────────────────
     pc1, pc2 = st.columns([1, 3])
-    if pc1.button("📂 选择 vipdoc 目录", use_container_width=True, key="dm_pick"):
+    if pc1.button("📂 选择 vipdoc 目录", use_container_width=True, key="dm_pick", disabled=running):
         picked = _pick_directory()
         if picked:
             # 直接写 widget 的 state key（keyed widget 忽略 value=，需改 state）
             st.session_state["dm_vipdoc"] = picked
             st.rerun()
     vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）",
-                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc")
+                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc",
+                            disabled=running)
 
     @st.dialog("确认初始化")
     def _confirm_init_dialog():
@@ -1118,44 +1122,64 @@ def render_data_mgmt(db_path: str) -> None:
         )
         dc1, dc2 = st.columns(2)
         if dc1.button("✅ 确认", type="primary", use_container_width=True, key="dm_init_ok"):
-            st.session_state["dm_do_init"] = True
+            st.session_state["dm_running"] = True
+            st.session_state["dm_task"] = "init"
             st.rerun()
         if dc2.button("取消", use_container_width=True, key="dm_init_cancel"):
             st.rerun()
 
     c1, c2 = st.columns(2)
-    if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init"):
+    if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init", disabled=running):
         if not vipdoc:
             st.warning("请先选择 vipdoc 目录")
         else:
             _confirm_init_dialog()
-    if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron"):
-        _release_db_connections(cur_db)
-        _run_command([tdx_exe, "cron", "--dburi", dburi])
-
-    # ── 确认后执行初始化（弹窗已关闭）──────────────────────────────────
-    if st.session_state.pop("dm_do_init", False):
-        _release_db_connections(cur_db)
-        try:
-            if os.path.exists(cur_db):
-                os.remove(cur_db)
-                st.info(f"已删除旧数据库 {cur_db}")
-        except Exception as e:
-            st.error(f"删除旧数据库失败（可能仍被占用）：{e}")
-        else:
-            _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+    if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron", disabled=running):
+        st.session_state["dm_running"] = True
+        st.session_state["dm_task"] = "cron"
+        st.rerun()
 
     st.divider()
     st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
     d1, d2 = st.columns(2)
-    py = sys.executable
-    if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init"):
-        _release_db_connections(cur_db)
-        _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
-                     cwd=repo_root)
-    if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily"):
-        _release_db_connections(cur_db)
-        _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+    if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init", disabled=running):
+        st.session_state["dm_running"] = True
+        st.session_state["dm_task"] = "rps_init"
+        st.rerun()
+    if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily", disabled=running):
+        st.session_state["dm_running"] = True
+        st.session_state["dm_task"] = "rps_daily"
+        st.rerun()
+
+    # ── 任务执行（按钮已禁用状态下运行）────────────────────────────────
+    task = st.session_state.get("dm_task")
+    if running and task:
+        st.info(f"⏳ 正在执行：{task}，请勿关闭页面…")
+        try:
+            _release_db_connections(cur_db)
+            if task == "init":
+                try:
+                    if os.path.exists(cur_db):
+                        os.remove(cur_db)
+                        st.info(f"已删除旧数据库 {cur_db}")
+                    removed = True
+                except Exception as e:
+                    st.error(f"删除旧数据库失败（可能仍被占用）：{e}")
+                    removed = False
+                if removed:
+                    _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+            elif task == "cron":
+                _run_command([tdx_exe, "cron", "--dburi", dburi])
+            elif task == "rps_init":
+                _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
+                             cwd=repo_root)
+            elif task == "rps_daily":
+                _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+        finally:
+            st.session_state["dm_running"] = False
+            st.session_state.pop("dm_task", None)
+        # 不自动 rerun，保留命令输出；用按钮恢复界面（解禁其它按钮）
+        st.button("✅ 完成，返回", type="primary", key="dm_done")
 
 
 # ---------------------------------------------------------------------------
