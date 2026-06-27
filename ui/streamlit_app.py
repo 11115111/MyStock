@@ -1082,6 +1082,27 @@ def render_data_mgmt(db_path: str) -> None:
     data_dir = os.path.join(repo_root, "data")
     os.makedirs(data_dir, exist_ok=True)
     cur_db = db_path or os.path.join(data_dir, "tdx.db")
+
+    # vipdoc 目录记忆：持久化到 data/dm_config.json
+    cfg_path = os.path.join(data_dir, "dm_config.json")
+
+    def _load_vipdoc() -> str:
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                return json.load(f).get("vipdoc", "")
+        except Exception:
+            return ""
+
+    def _save_vipdoc(path: str) -> None:
+        try:
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"vipdoc": path}, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    # 首次进入时把磁盘里记忆的值灌入 session_state
+    if "dm_vipdoc" not in st.session_state:
+        st.session_state["dm_vipdoc"] = _load_vipdoc()
     tdx_exe = os.path.join(repo_root, "tdx2db.exe")
     # tdx2db 的 --dburi 只接受正斜杠路径
     dburi = f"duckdb://{cur_db.replace(chr(92), '/')}"
@@ -1110,10 +1131,14 @@ def render_data_mgmt(db_path: str) -> None:
         if picked:
             # 直接写 widget 的 state key（keyed widget 忽略 value=，需改 state）
             st.session_state["dm_vipdoc"] = picked
+            _save_vipdoc(picked)
             st.rerun()
     vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）",
                             placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc",
                             disabled=running)
+    # 手动编辑后也记忆
+    if vipdoc and vipdoc != _load_vipdoc():
+        _save_vipdoc(vipdoc)
 
     @st.dialog("确认初始化")
     def _confirm_init_dialog():
