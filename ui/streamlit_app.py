@@ -1071,7 +1071,8 @@ def render_data_mgmt(db_path: str) -> None:
     os.makedirs(data_dir, exist_ok=True)
     cur_db = db_path or os.path.join(data_dir, "tdx.db")
     tdx_exe = os.path.join(repo_root, "tdx2db.exe")
-    dburi = f"duckdb://{cur_db}"
+    # tdx2db 的 --dburi 只接受正斜杠路径
+    dburi = f"duckdb://{cur_db.replace(chr(92), '/')}"
 
     if not os.path.exists(cur_db):
         st.info(
