@@ -47,6 +47,17 @@ MyStock\
 > 依赖 cwd 在仓库根（启动.bat 已 `cd /d %~dp0` 处理）。
 > 启动.bat 放在根目录，与 cli/ui 同级。
 
+### 2.5 补齐 tkinter（目录选择框需要）
+
+数据管理里「选择 vipdoc 目录」用 tkinter 弹原生目录框，但 Windows 嵌入式
+Python **默认不含 tkinter**。从一个同版本的完整 Python 安装目录复制以下内容到嵌入式目录：
+
+- `DLLs\_tkinter.pyd`、`DLLs\tcl86t.dll`、`DLLs\tk86t.dll`
+- `Lib\tkinter\`（整个目录）→ 放到嵌入式的 `Lib\tkinter\`
+- `tcl\`（整个目录）→ 放到嵌入式根目录
+
+若不补 tkinter，目录框打不开，会提示手动粘贴路径，功能仍可用。
+
 ### 3. 放入 tdx2db.exe
 
 把 `tdx2db.exe` 放到绿色文件夹**根目录**（与 `启动.bat` 同级）。

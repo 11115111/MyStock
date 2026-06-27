@@ -1045,29 +1045,55 @@ def _release_db_connections() -> None:
         pass
 
 
+def _pick_directory() -> str | None:
+    """弹出系统原生目录选择框（本地运行时有效）。返回所选路径或 None。"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", 1)
+        path = filedialog.askdirectory(master=root)
+        root.destroy()
+        return path or None
+    except Exception as e:  # 嵌入式 python 可能缺 tkinter
+        st.warning(f"无法打开目录选择框（{e}），请手动粘贴路径。")
+        return None
+
+
 def render_data_mgmt(db_path: str) -> None:
     import os
 
     repo_root = str(Path(__file__).parent.parent)  # ui/ 的上一级即仓库根
 
-    st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
-
-    # ── 路径配置 ──────────────────────────────────────────────────────
-    with st.expander("路径配置", expanded=True):
-        default_exe = os.path.join(repo_root, "tdx2db.exe")
-        tdx_exe = st.text_input("tdx2db.exe 路径", value=default_exe, key="dm_exe")
-        cur_db  = st.text_input("数据库文件路径", value=db_path or "", key="dm_db")
-        vipdoc  = st.text_input("通达信 vipdoc 目录（初始化用）",
-                                placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc")
-
+    # DB 固定放 data 子目录，不在 UI 配置
+    data_dir = os.path.join(repo_root, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    cur_db = db_path or os.path.join(data_dir, "tdx.db")
+    tdx_exe = os.path.join(repo_root, "tdx2db.exe")
     dburi = f"duckdb://{cur_db}"
+
+    st.caption(f"数据库：`{cur_db}`")
+    st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
 
     st.divider()
     st.markdown("#### 1. tdx2db 行情数据")
+
+    # ── vipdoc 目录选择 ───────────────────────────────────────────────
+    vipdoc = st.session_state.get("dm_vipdoc", "")
+    pc1, pc2 = st.columns([1, 3])
+    if pc1.button("📂 选择 vipdoc 目录", use_container_width=True, key="dm_pick"):
+        picked = _pick_directory()
+        if picked:
+            st.session_state["dm_vipdoc"] = picked
+            vipdoc = picked
+    vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）", value=vipdoc,
+                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc_text")
+
     c1, c2 = st.columns(2)
     if c1.button("🆕 初始化（首次全量）", use_container_width=True, key="dm_tdx_init"):
         if not vipdoc:
-            st.warning("请先填写 vipdoc 目录")
+            st.warning("请先选择 vipdoc 目录")
         else:
             _release_db_connections()
             _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
