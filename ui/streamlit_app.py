@@ -1037,10 +1037,22 @@ def _run_command(cmd: list[str], cwd: str | None = None) -> None:
         st.error(f"失败 (exit {proc.returncode})")
 
 
-def _release_db_connections() -> None:
-    """释放 streamlit 持有的只读连接，避免 DuckDB 写锁冲突。"""
+def _release_db_connections(db_path: str | None = None) -> None:
+    """释放 streamlit 持有的只读连接，避免 DuckDB 写锁冲突。
+
+    仅 clear() 不够——缓存对象仍持有文件锁，必须显式 close() 后再清缓存，
+    并触发 GC 让 DuckDB 真正释放 OS 层文件锁。
+    """
+    import gc
     try:
+        if db_path:
+            try:
+                con = get_con(db_path)  # 取回缓存的连接对象
+                con.close()
+            except Exception:
+                pass
         get_con.clear()
+        gc.collect()
     except Exception:
         pass
 
@@ -1104,10 +1116,10 @@ def render_data_mgmt(db_path: str) -> None:
         if not vipdoc:
             st.warning("请先选择 vipdoc 目录")
         else:
-            _release_db_connections()
+            _release_db_connections(cur_db)
             _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
     if c2.button("🔄 日常更新", use_container_width=True, key="dm_tdx_cron"):
-        _release_db_connections()
+        _release_db_connections(cur_db)
         _run_command([tdx_exe, "cron", "--dburi", dburi])
 
     st.divider()
@@ -1115,11 +1127,11 @@ def render_data_mgmt(db_path: str) -> None:
     d1, d2 = st.columns(2)
     py = sys.executable
     if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init"):
-        _release_db_connections()
+        _release_db_connections(cur_db)
         _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
                      cwd=repo_root)
     if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily"):
-        _release_db_connections()
+        _release_db_connections(cur_db)
         _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
 
 
