@@ -1058,20 +1058,65 @@ def _release_db_connections(db_path: str | None = None) -> None:
         pass
 
 
-def _pick_directory() -> str | None:
-    """弹出系统原生目录选择框（本地运行时有效）。返回所选路径或 None。"""
+def _list_drives() -> list[str]:
+    """Windows 列出盘符；其它平台返回根。"""
+    import os
+    import string
+    if os.name == "nt":
+        return [f"{d}:\\" for d in string.ascii_uppercase
+                if os.path.exists(f"{d}:\\")]
+    return ["/"]
+
+
+def _dir_browser(state_key: str, on_select) -> None:
+    """纯 Python 目录浏览器（不依赖 tkinter）。
+
+    state_key: session_state 里保存"当前浏览目录"的键
+    on_select: 选定目录时的回调，参数为绝对路径
+    """
+    import os
+
+    cur = st.session_state.get(state_key) or (_list_drives()[0])
+    cur = os.path.abspath(cur)
+    st.text_input("当前目录", value=cur, key=f"{state_key}_show", disabled=True)
+
+    # 顶部：上级 + 选定
+    cols = st.columns(2)
+    if cols[0].button("⬆️ 上级", use_container_width=True, key=f"{state_key}_up"):
+        parent = os.path.dirname(cur.rstrip("\\/")) or cur
+        st.session_state[state_key] = parent
+        st.rerun()
+    if cols[1].button("✅ 选定此目录", type="primary", use_container_width=True,
+                      key=f"{state_key}_sel"):
+        on_select(cur)
+        return
+    # 盘符快捷切换（Windows 多盘）
+    drives = _list_drives()
+    if len(drives) > 1:
+        dcols = st.columns(len(drives))
+        for i, d in enumerate(drives):
+            if dcols[i].button(d, use_container_width=True, key=f"{state_key}_drv_{d}"):
+                st.session_state[state_key] = d
+                st.rerun()
+
+    # 子目录列表
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes("-topmost", 1)
-        path = filedialog.askdirectory(master=root)
-        root.destroy()
-        return path or None
-    except Exception as e:  # 嵌入式 python 可能缺 tkinter
-        st.warning(f"无法打开目录选择框（{e}），请手动粘贴路径。")
-        return None
+        subs = sorted(
+            [e for e in os.listdir(cur)
+             if os.path.isdir(os.path.join(cur, e)) and not e.startswith(".")],
+            key=str.lower,
+        )
+    except Exception as e:
+        st.error(f"无法读取目录：{e}")
+        subs = []
+
+    if not subs:
+        st.caption("（无子目录）")
+    for name in subs[:300]:
+        if st.button(f"📁 {name}", use_container_width=True,
+                     key=f"{state_key}_d_{name}"):
+            st.session_state[state_key] = os.path.join(cur, name)
+            st.rerun()
 
 
 def render_data_mgmt(db_path: str) -> None:
@@ -1127,19 +1172,33 @@ def render_data_mgmt(db_path: str) -> None:
 
     # ── vipdoc 目录选择 ───────────────────────────────────────────────
     pc1, pc2 = st.columns([1, 3])
-    if pc1.button("📂 选择 vipdoc 目录", use_container_width=True, key="dm_pick", disabled=running):
-        picked = _pick_directory()
-        if picked:
-            # 直接写 widget 的 state key（keyed widget 忽略 value=，需改 state）
-            st.session_state["dm_vipdoc"] = picked
-            _save_vipdoc(picked)
-            st.rerun()
+    if pc1.button("📂 浏览选择目录", use_container_width=True, key="dm_pick", disabled=running):
+        # 初始化浏览起点为当前已填路径
+        st.session_state["dm_browse"] = st.session_state.get("dm_vipdoc") or ""
+        st.session_state["dm_browse_open"] = True
+        st.rerun()
     vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）",
                             placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc",
                             disabled=running)
     # 手动编辑后也记忆
     if vipdoc and vipdoc != _load_vipdoc():
         _save_vipdoc(vipdoc)
+
+    # 目录浏览器（纯 Python，不依赖 tkinter）
+    if st.session_state.get("dm_browse_open") and not running:
+        with st.container(border=True):
+            st.caption("浏览并选定 vipdoc 目录")
+
+            def _on_select(path: str) -> None:
+                st.session_state["dm_vipdoc"] = path
+                _save_vipdoc(path)
+                st.session_state["dm_browse_open"] = False
+                st.rerun()
+
+            _dir_browser("dm_browse", _on_select)
+            if st.button("关闭浏览器", key="dm_browse_close"):
+                st.session_state["dm_browse_open"] = False
+                st.rerun()
 
     if st.button("🆕 初始化行情（首次全量，删除重建）", use_container_width=True,
                  key="dm_tdx_init", disabled=running):
