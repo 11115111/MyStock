@@ -1073,6 +1073,14 @@ def render_data_mgmt(db_path: str) -> None:
     tdx_exe = os.path.join(repo_root, "tdx2db.exe")
     dburi = f"duckdb://{cur_db}"
 
+    if not os.path.exists(cur_db):
+        st.info(
+            "👋 检测到数据库尚未初始化。首次使用请按顺序操作：\n\n"
+            "1️⃣ 选择通达信 vipdoc 目录 → 点「tdx2db 初始化」\n\n"
+            "2️⃣ 完成后点「本项目初始化历史」\n\n"
+            "之后日常只需依次点两个「日常更新 / 刷新」即可。"
+        )
+
     st.caption(f"数据库：`{cur_db}`")
     st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
 
@@ -1151,8 +1159,10 @@ def main() -> None:
         # "sentiment":   ("🔥", "情绪周期"),  # 暂时隐藏
         "data_mgmt":   ("⚙️", "数据管理"),
     }
+    db_exists = os.path.exists(db_path)
     if "module" not in st.session_state:
-        st.session_state.module = "sanxianhong"
+        # 首次启动若数据库尚未初始化，直接引导到数据管理
+        st.session_state.module = "sanxianhong" if db_exists else "data_mgmt"
 
     with st.sidebar:
         st.divider()
