@@ -1074,20 +1074,6 @@ def _pick_directory() -> str | None:
         return None
 
 
-@st.dialog("确认初始化")
-def _confirm_init_dialog(cur_db: str) -> None:
-    st.warning(
-        f"初始化会**删除并重建**数据库，现有数据将全部丢失：\n\n`{cur_db}`\n\n确认继续？"
-    )
-    dc1, dc2 = st.columns(2)
-    if dc1.button("✅ 确认", type="primary", use_container_width=True, key="dm_init_ok"):
-        st.session_state["dm_running"] = True
-        st.session_state["dm_task"] = "init"
-        st.rerun()
-    if dc2.button("取消", use_container_width=True, key="dm_init_cancel"):
-        st.rerun()
-
-
 def render_data_mgmt(db_path: str) -> None:
     import os
 
@@ -1160,7 +1146,20 @@ def render_data_mgmt(db_path: str) -> None:
         if not vipdoc:
             st.warning("请先选择 vipdoc 目录")
         else:
-            _confirm_init_dialog(cur_db)
+            st.session_state["dm_confirm_init"] = True
+
+    # 内联二次确认
+    if st.session_state.get("dm_confirm_init") and not running:
+        st.warning(f"⚠️ 初始化会**删除并重建**数据库，现有数据全部丢失：\n\n`{cur_db}`")
+        cc1, cc2 = st.columns(2)
+        if cc1.button("✅ 确认初始化", type="primary", use_container_width=True, key="dm_init_ok"):
+            st.session_state.pop("dm_confirm_init", None)
+            st.session_state["dm_running"] = True
+            st.session_state["dm_task"] = "init"
+            st.rerun()
+        if cc2.button("取消", use_container_width=True, key="dm_init_cancel"):
+            st.session_state.pop("dm_confirm_init", None)
+            st.rerun()
 
     st.divider()
     st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
