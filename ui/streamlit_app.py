@@ -1007,6 +1007,103 @@ def render_screen(con_id: int, db_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 成交额分布（即时查 raw_basic_daily）
+# ---------------------------------------------------------------------------
+
+# 成交额分桶（单位：亿元），(下界, 上界或None, 标签)
+_AMT_BUCKETS = [
+    (0,   1,    "<1亿"),
+    (1,   2,    "1-2亿"),
+    (2,   5,    "2-5亿"),
+    (5,   10,   "5-10亿"),
+    (10,  20,   "10-20亿"),
+    (20,  50,   "20-50亿"),
+    (50,  100,  "50-100亿"),
+    (100, None, ">100亿"),
+]
+
+
+@st.cache_data(ttl=60)
+def load_turnover_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    rows = con.execute(
+        "SELECT DISTINCT date FROM raw_basic_daily ORDER BY date DESC LIMIT 120"
+    ).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+@st.cache_data(ttl=60)
+def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
+    """即时统计当天全市场成交额分桶家数 + 每桶合计成交额（亿）。"""
+    con = get_con(db_path)
+    case_bucket = "CASE\n"
+    for i, (lo, hi, _label) in enumerate(_AMT_BUCKETS):
+        amt_hi = "" if hi is None else f" AND amt_yi < {hi}"
+        case_bucket += f"  WHEN amt_yi >= {lo}{amt_hi} THEN {i}\n"
+    case_bucket += "END"
+    sql = f"""
+        WITH base AS (
+            SELECT amount / 1e8 AS amt_yi
+            FROM raw_basic_daily
+            WHERE date = $1 AND amount > 0
+        )
+        SELECT {case_bucket} AS bucket_idx,
+               COUNT(*)              AS 家数,
+               ROUND(SUM(amt_yi), 1) AS 成交额亿
+        FROM base
+        GROUP BY bucket_idx
+    """
+    df = con.execute(sql, [trade_date]).df()
+    labels = [b[2] for b in _AMT_BUCKETS]
+    out = pd.DataFrame({"区间": labels, "家数": 0, "成交额亿": 0.0})
+    for _, r in df.iterrows():
+        if pd.notna(r["bucket_idx"]):
+            out.loc[int(r["bucket_idx"]), "家数"] = int(r["家数"])
+            out.loc[int(r["bucket_idx"]), "成交额亿"] = float(r["成交额亿"])
+    return out
+
+
+def render_turnover(con_id: int, db_path: str) -> None:
+    import plotly.graph_objects as go
+
+    dates = load_turnover_dates(con_id, db_path)
+    if not dates:
+        st.warning("raw_basic_daily 暂无数据，请先到 ⚙️ 数据管理 初始化行情")
+        return
+
+    c1, c2 = st.columns([2, 3])
+    selected_date = c1.selectbox("日期", dates, index=0, key="tv_date")
+    metric = c2.radio("统计口径", ["家数", "成交额亿"], horizontal=True, key="tv_metric")
+
+    df = load_turnover_dist(con_id, db_path, selected_date)
+    total_amt = df["成交额亿"].sum()
+    total_cnt = df["家数"].sum()
+
+    m1, m2 = st.columns(2)
+    m1.metric("全市场成交额", f"{total_amt/1e4:.2f} 万亿" if total_amt >= 1e4 else f"{total_amt:.0f} 亿")
+    m2.metric("有成交个股数", f"{int(total_cnt)}")
+
+    # 单序列量级分布 → 柱状图，直接在柱顶标数值，无需图例
+    accent = "#3B82F6"
+    txt = df[metric].map(lambda v: f"{v:.0f}" if metric == "家数" else f"{v:.0f}")
+    fig = go.Figure(go.Bar(
+        x=df["区间"], y=df[metric], text=txt, textposition="outside",
+        marker_color=accent, marker_line_width=0,
+        hovertemplate="%{x}<br>%{y}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        yaxis_title=metric, xaxis_title="成交额区间",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
+    st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("明细表"):
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # 数据管理：tdx2db 初始化/更新 + 本项目数据初始化/刷新
 # ---------------------------------------------------------------------------
 
@@ -1323,6 +1420,7 @@ def main() -> None:
         "sanxianhong": ("📈", "三线红榜单"),
         "screen":      ("🔍", "自选筛选"),
         "breadth":     ("🌡️", "市场宽度"),
+        "turnover":    ("💰", "成交额分布"),
         # "sentiment":   ("🔥", "情绪周期"),  # 暂时隐藏
         "data_mgmt":   ("⚙️", "数据管理"),
     }
@@ -1368,6 +1466,8 @@ def main() -> None:
         render_screen(con_id, db_path)
     elif module == "breadth":
         render_breadth(con_id, db_path)
+    elif module == "turnover":
+        render_turnover(con_id, db_path)
     elif module == "sentiment":
         render_sentiment(con_id, db_path)
 
