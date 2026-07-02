@@ -1087,31 +1087,26 @@ def render_turnover(con_id: int, db_path: str) -> None:
         st.warning("raw_kline_daily 暂无数据，请先到 ⚙️ 数据管理 初始化行情")
         return
 
-    # dates 按降序（最新在前）。用索引 + 前/后一日按钮快速切换
-    if "tv_idx" not in st.session_state:
-        st.session_state["tv_idx"] = 0
-    st.session_state["tv_idx"] = min(st.session_state["tv_idx"], len(dates) - 1)
+    # dates 按降序（最新在前）。以 selectbox 的 state key(tv_date) 为唯一真相，
+    # 前/后一日按钮直接改写它（keyed widget 实例化前写入才生效）
+    if st.session_state.get("tv_date") not in dates:
+        st.session_state["tv_date"] = dates[0]
+    idx = dates.index(st.session_state["tv_date"])
 
     bcol1, bcol2, bcol3, bcol4 = st.columns([1, 1, 3, 1])
     if bcol1.button("◀ 前一日", use_container_width=True, key="tv_prev",
-                    disabled=st.session_state["tv_idx"] >= len(dates) - 1):
-        st.session_state["tv_idx"] += 1
+                    disabled=idx >= len(dates) - 1):
+        st.session_state["tv_date"] = dates[idx + 1]
         st.rerun()
     if bcol2.button("后一日 ▶", use_container_width=True, key="tv_next",
-                    disabled=st.session_state["tv_idx"] <= 0):
-        st.session_state["tv_idx"] -= 1
+                    disabled=idx <= 0):
+        st.session_state["tv_date"] = dates[idx - 1]
         st.rerun()
-    picked = bcol3.selectbox("日期", dates, index=st.session_state["tv_idx"],
-                             key="tv_date", label_visibility="collapsed")
-    # 下拉手动选择时同步索引
-    if picked != dates[st.session_state["tv_idx"]]:
-        st.session_state["tv_idx"] = dates.index(picked)
+    if bcol4.button("最新", use_container_width=True, key="tv_latest", disabled=idx == 0):
+        st.session_state["tv_date"] = dates[0]
         st.rerun()
-    if bcol4.button("最新", use_container_width=True, key="tv_latest",
-                    disabled=st.session_state["tv_idx"] == 0):
-        st.session_state["tv_idx"] = 0
-        st.rerun()
-    selected_date = dates[st.session_state["tv_idx"]]
+    selected_date = bcol3.selectbox("日期", dates, key="tv_date",
+                                    label_visibility="collapsed")
 
     vals = load_turnover_values(con_id, db_path, selected_date)
     if vals.size == 0:
