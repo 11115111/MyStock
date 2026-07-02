@@ -1034,6 +1034,20 @@ def load_turnover_dates(_con_id: int, db_path: str) -> list[str]:
 
 
 @st.cache_data(ttl=60)
+def load_turnover_values(_con_id: int, db_path: str, trade_date: str) -> np.ndarray:
+    """当天所有股票成交额（亿），用于对数分布与分位数分析。"""
+    con = get_con(db_path)
+    rows = con.execute("""
+        SELECT k.amount / 1e8 AS amt_yi
+        FROM raw_kline_daily k
+        JOIN stock_pool sp ON sp.symbol = k.symbol
+        WHERE k.date = $1 AND k.amount > 0
+        ORDER BY amt_yi
+    """, [trade_date]).fetchall()
+    return np.array([r[0] for r in rows], dtype=float)
+
+
+@st.cache_data(ttl=60)
 def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
     """即时统计当天全市场成交额分桶家数 + 每桶合计成交额（亿）。"""
     con = get_con(db_path)
@@ -1070,39 +1084,100 @@ def render_turnover(con_id: int, db_path: str) -> None:
 
     dates = load_turnover_dates(con_id, db_path)
     if not dates:
-        st.warning("raw_basic_daily 暂无数据，请先到 ⚙️ 数据管理 初始化行情")
+        st.warning("raw_kline_daily 暂无数据，请先到 ⚙️ 数据管理 初始化行情")
         return
 
-    c1, c2 = st.columns([2, 3])
-    selected_date = c1.selectbox("日期", dates, index=0, key="tv_date")
-    metric = c2.radio("统计口径", ["家数", "成交额亿"], horizontal=True, key="tv_metric")
+    selected_date = st.selectbox("日期", dates, index=0, key="tv_date")
+    vals = load_turnover_values(con_id, db_path, selected_date)
+    if vals.size == 0:
+        st.info(f"{selected_date} 无成交数据")
+        return
 
-    df = load_turnover_dist(con_id, db_path, selected_date)
-    total_amt = df["成交额亿"].sum()
-    total_cnt = df["家数"].sum()
+    total_amt = float(vals.sum())
+    total_cnt = int(vals.size)
 
-    m1, m2 = st.columns(2)
+    # 分位数（找活跃门槛用）
+    pcts = {p: float(np.percentile(vals, p)) for p in (50, 80, 90, 95, 99)}
+
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("全市场成交额", f"{total_amt/1e4:.2f} 万亿" if total_amt >= 1e4 else f"{total_amt:.0f} 亿")
-    m2.metric("有成交个股数", f"{int(total_cnt)}")
+    m2.metric("有成交个股", f"{total_cnt}")
+    m3.metric("中位数 P50", f"{pcts[50]:.2f} 亿")
+    m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
 
-    # 单序列量级分布 → 柱状图，直接在柱顶标数值，无需图例
-    accent = "#3B82F6"
-    txt = df[metric].map(lambda v: f"{v:.0f}" if metric == "家数" else f"{v:.0f}")
-    fig = go.Figure(go.Bar(
-        x=df["区间"], y=df[metric], text=txt, textposition="outside",
-        marker_color=accent, marker_line_width=0,
-        hovertemplate="%{x}<br>%{y}<extra></extra>",
-    ))
-    fig.update_layout(
-        height=420, margin=dict(l=10, r=10, t=30, b=10),
-        yaxis_title=metric, xaxis_title="成交额区间",
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-    )
-    fig.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
-    st.plotly_chart(fig, use_container_width=True)
+    tab1, tab2 = st.tabs(["对数分布（找门槛）", "固定档位"])
 
-    with st.expander("明细表"):
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    # ── 对数刻度直方图 + 分位数竖线 ────────────────────────────────────
+    with tab1:
+        st.caption("成交额取对数后作直方图：长尾被拉直，主峰/肩部/波谷即天然分界；"
+                   "竖线为分位数门槛（每日自适应总量能）。")
+        logv = np.log10(vals)
+        nbins = 40
+        lo, hi = logv.min(), logv.max()
+        edges = np.linspace(lo, hi, nbins + 1)
+        counts, _ = np.histogram(logv, bins=edges)
+        centers = (edges[:-1] + edges[1:]) / 2
+        # 每个柱对应的亿区间（用于 hover）
+        lows = 10 ** edges[:-1]
+        highs = 10 ** edges[1:]
+        hover = [f"{lo_:.2f}–{hi_:.2f} 亿<br>%d 只" % c
+                 for lo_, hi_, c in zip(lows, highs, counts)]
+
+        accent = "#3B82F6"
+        fig = go.Figure(go.Bar(
+            x=centers, y=counts, marker_color=accent, marker_line_width=0,
+            width=(edges[1] - edges[0]) * 0.95,
+            hovertext=hover, hovertemplate="%{hovertext}<extra></extra>",
+        ))
+        # 分位数竖线
+        pct_colors = {50: "#94A3B8", 80: "#F59E0B", 90: "#EF4444", 95: "#B91C1C", 99: "#7F1D1D"}
+        for p, v in pcts.items():
+            x = np.log10(v)
+            fig.add_vline(x=x, line_width=1.5, line_dash="dash",
+                          line_color=pct_colors[p])
+            fig.add_annotation(x=x, yref="paper", y=1.0,
+                               text=f"P{p}<br>{v:.1f}亿", showarrow=False,
+                               font=dict(size=10, color=pct_colors[p]),
+                               yanchor="bottom")
+        # x 轴用亿刻度
+        ticks_yi = [0.1, 0.3, 1, 3, 10, 30, 100, 300]
+        ticks_yi = [t for t in ticks_yi if lo <= np.log10(t) <= hi]
+        fig.update_xaxes(
+            tickvals=[np.log10(t) for t in ticks_yi],
+            ticktext=[f"{t:g}亿" for t in ticks_yi],
+            title="成交额（对数刻度）",
+        )
+        fig.update_yaxes(title="个股数", gridcolor="rgba(128,128,128,0.2)")
+        fig.update_layout(
+            height=440, margin=dict(l=10, r=10, t=40, b=10),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption(
+            f"分位门槛：P50={pcts[50]:.2f}亿 · P80={pcts[80]:.2f}亿 · "
+            f"P90={pcts[90]:.2f}亿 · P95={pcts[95]:.2f}亿 · P99={pcts[99]:.2f}亿"
+        )
+
+    # ── 固定档位柱状图（参考）──────────────────────────────────────────
+    with tab2:
+        df = load_turnover_dist(con_id, db_path, selected_date)
+        metric = st.radio("统计口径", ["家数", "成交额亿"], horizontal=True, key="tv_metric")
+        txt = df[metric].map(lambda v: f"{v:.0f}")
+        fig2 = go.Figure(go.Bar(
+            x=df["区间"], y=df[metric], text=txt, textposition="outside",
+            marker_color="#3B82F6", marker_line_width=0,
+            hovertemplate="%{x}<br>%{y}<extra></extra>",
+        ))
+        fig2.update_layout(
+            height=420, margin=dict(l=10, r=10, t=30, b=10),
+            yaxis_title=metric, xaxis_title="成交额区间",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
+        fig2.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
+        st.plotly_chart(fig2, use_container_width=True)
+        with st.expander("明细表"):
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
