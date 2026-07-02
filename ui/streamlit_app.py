@@ -1043,9 +1043,10 @@ def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFr
     case_bucket += "END"
     sql = f"""
         WITH base AS (
-            SELECT amount / 1e8 AS amt_yi
-            FROM raw_kline_daily
-            WHERE date = $1 AND amount > 0
+            SELECT k.amount / 1e8 AS amt_yi
+            FROM raw_kline_daily k
+            JOIN stock_pool sp ON sp.symbol = k.symbol   -- 只统计股票，排除指数/ETF/板块
+            WHERE k.date = $1 AND k.amount > 0
         )
         SELECT {case_bucket} AS bucket_idx,
                COUNT(*)              AS 家数,
