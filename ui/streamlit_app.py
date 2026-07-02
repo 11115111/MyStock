@@ -1154,7 +1154,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
             width=(edges[1] - edges[0]) * 0.95,
             hovertext=hover, hovertemplate="%{hovertext}<extra></extra>",
         ))
-        # 分位数竖线
+        # 分位数竖线（顶部标注）
         pct_colors = {50: "#94A3B8", 80: "#F59E0B", 90: "#EF4444", 95: "#B91C1C", 99: "#7F1D1D"}
         for p, v in pcts.items():
             x = np.log10(v)
@@ -1164,6 +1164,31 @@ def render_turnover(con_id: int, db_path: str) -> None:
                                text=f"P{p}<br>{v:.1f}亿", showarrow=False,
                                font=dict(size=10, color=pct_colors[p]),
                                yanchor="bottom")
+
+        # μ+1σ / μ+2σ（对数空间）——实线，底部标注
+        mu_log, sd_log = float(logv.mean()), float(logv.std())
+        sigma_lines = {
+            "μ+1σ": (mu_log + sd_log, "#10B981"),
+            "μ+2σ": (mu_log + 2 * sd_log, "#059669"),
+        }
+        for label, (xlog, color) in sigma_lines.items():
+            v_yi = 10 ** xlog
+            fig.add_vline(x=xlog, line_width=1.5, line_color=color)
+            fig.add_annotation(x=xlog, yref="paper", y=0.0,
+                               text=f"{label}<br>{v_yi:.1f}亿", showarrow=False,
+                               font=dict(size=10, color=color), yanchor="top")
+
+        # Pareto 50%：成交额从大到小累加，前若干只占全市场 50% 的门槛
+        desc = np.sort(vals)[::-1]
+        cum = np.cumsum(desc)
+        k = int(np.searchsorted(cum, total_amt * 0.5) + 1)
+        pareto_v = float(desc[min(k, len(desc)) - 1])
+        px = np.log10(pareto_v)
+        fig.add_vline(x=px, line_width=2, line_dash="dot", line_color="#8B5CF6")
+        fig.add_annotation(x=px, yref="paper", y=0.5,
+                           text=f"Pareto50%<br>{pareto_v:.1f}亿<br>(前{k}只)",
+                           showarrow=False, font=dict(size=10, color="#8B5CF6"),
+                           bgcolor="rgba(255,255,255,0.6)")
         # x 轴用亿刻度
         ticks_yi = [0.1, 0.3, 1, 3, 10, 30, 100, 300]
         ticks_yi = [t for t in ticks_yi if lo <= np.log10(t) <= hi]
@@ -1182,6 +1207,11 @@ def render_turnover(con_id: int, db_path: str) -> None:
         st.caption(
             f"分位门槛：P50={pcts[50]:.2f}亿 · P80={pcts[80]:.2f}亿 · "
             f"P90={pcts[90]:.2f}亿 · P95={pcts[95]:.2f}亿 · P99={pcts[99]:.2f}亿"
+        )
+        st.caption(
+            f"μ+1σ={10**(mu_log+sd_log):.2f}亿 · μ+2σ={10**(mu_log+2*sd_log):.2f}亿 "
+            f"（对数空间，随分化 σ 自适应）｜ Pareto50%={pareto_v:.2f}亿"
+            f"（前 {k} 只占全市场成交额一半）"
         )
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
