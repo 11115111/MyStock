@@ -1073,6 +1073,52 @@ def load_active_stocks(_con_id: int, db_path: str, trade_date: str,
 
 
 @st.cache_data(ttl=60)
+def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> pd.DataFrame:
+    """某日某分区在榜个股（含连续天数），标注是否新进榜。"""
+    con = get_con(db_path)
+    try:
+        return con.execute("""
+            SELECT symbol AS 代码, name AS 名称,
+                   amount_yi AS 成交额亿,
+                   rps50, rps120, rps250,
+                   change_pct AS 涨跌幅, close_bfq AS 现价,
+                   consecutive_days AS 连续天数, join_date AS 本轮进榜,
+                   (consecutive_days = 1) AS 新进榜
+            FROM active_pool_daily
+            WHERE trade_date = $1 AND zone = $2
+            ORDER BY 成交额亿 DESC
+        """, [trade_date, zone]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def load_active_exits(_con_id: int, db_path: str, trade_date: str, zone: str) -> pd.DataFrame:
+    """退榜：上一交易日在榜、今日不在榜。"""
+    con = get_con(db_path)
+    try:
+        prev = con.execute("""
+            SELECT MAX(trade_date) FROM active_pool_daily
+            WHERE trade_date < $1 AND zone = $2
+        """, [trade_date, zone]).fetchone()
+        if not prev or not prev[0]:
+            return pd.DataFrame()
+        return con.execute("""
+            SELECT p.symbol AS 代码, p.name AS 名称,
+                   p.amount_yi AS 昨成交额亿, p.consecutive_days AS 昨连续天数
+            FROM active_pool_daily p
+            WHERE p.trade_date = $2 AND p.zone = $3
+              AND NOT EXISTS (
+                  SELECT 1 FROM active_pool_daily t
+                  WHERE t.trade_date = $1 AND t.zone = $3 AND t.symbol = p.symbol
+              )
+            ORDER BY p.amount_yi DESC
+        """, [trade_date, prev[0], zone]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
 def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
     """即时统计当天全市场成交额分桶家数 + 每桶合计成交额（亿）。"""
     con = get_con(db_path)
@@ -1150,7 +1196,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
     m3.metric("中位数 P50", f"{pcts[50]:.2f} 亿")
     m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
 
-    tab1, tab2 = st.tabs(["对数分布（找门槛）", "固定档位"])
+    tab1, tab2, tab3 = st.tabs(["对数分布（找门槛）", "固定档位", "进退榜（需先刷新）"])
 
     # ── 对数刻度直方图 + 分位数竖线 ────────────────────────────────────
     with tab1:
@@ -1296,6 +1342,39 @@ def render_turnover(con_id: int, db_path: str) -> None:
         st.plotly_chart(fig2, use_container_width=True)
         with st.expander("明细表"):
             st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ── 进退榜（读 active_pool_daily，需先跑 run_daily 刷新）──────────────
+    with tab3:
+        st.caption("跨日追踪：连续在榜天数、新进榜、退榜。数据来自 active_pool_daily，"
+                   "需先在 ⚙️ 数据管理 执行刷新（run_daily）。门槛每日自适应。")
+        zone_label = st.radio("分区", ["资金主力区(Pareto50%)", "焦点龙头区(拐点)"],
+                              horizontal=True, key="tv_zone")
+        zone = "pareto" if zone_label.startswith("资金") else "knee"
+
+        pool = load_active_pool(con_id, db_path, selected_date, zone)
+        exits = load_active_exits(con_id, db_path, selected_date, zone)
+        if pool.empty and exits.empty:
+            st.info("该日无数据（未刷新或当天该分区为空）")
+        else:
+            new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
+            pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
+            st.markdown(f"**在榜 {len(pool)} 只**（其中新进榜 {len(new_in)} 只）")
+            st.dataframe(pool_show, use_container_width=True, hide_index=True)
+
+            e1, e2 = st.columns(2)
+            with e1:
+                st.markdown(f"**🆕 今日新进榜（{len(new_in)}）**")
+                if new_in.empty:
+                    st.caption("无")
+                else:
+                    st.dataframe(new_in.drop(columns=["新进榜"]),
+                                 use_container_width=True, hide_index=True)
+            with e2:
+                st.markdown(f"**🚪 今日退榜（{len(exits)}）**")
+                if exits.empty:
+                    st.caption("无")
+                else:
+                    st.dataframe(exits, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
