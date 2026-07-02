@@ -1048,6 +1048,31 @@ def load_turnover_values(_con_id: int, db_path: str, trade_date: str) -> np.ndar
 
 
 @st.cache_data(ttl=60)
+def load_active_stocks(_con_id: int, db_path: str, trade_date: str,
+                       min_amt_yi: float) -> pd.DataFrame:
+    """成交额 ≥ 门槛的股票清单，交叉 RPS（若已计算）。"""
+    con = get_con(db_path)
+    sql = """
+        SELECT k.symbol AS 代码,
+               sp.name   AS 名称,
+               ROUND(k.amount / 1e8, 2) AS 成交额亿,
+               ROUND(r.rps50, 1)  AS rps50,
+               ROUND(r.rps120, 1) AS rps120,
+               ROUND(r.rps250, 1) AS rps250,
+               ROUND(r.change_pct, 2) AS 涨跌幅,
+               ROUND(r.close_bfq, 2)  AS 现价,
+               ROUND(r.floatmv / 1e8, 1) AS 流通市值亿
+        FROM raw_kline_daily k
+        JOIN stock_pool sp ON sp.symbol = k.symbol
+        LEFT JOIN rps_stock_daily r
+               ON r.symbol = k.symbol AND r.trade_date = k.date
+        WHERE k.date = $1 AND k.amount / 1e8 >= $2
+        ORDER BY k.amount DESC
+    """
+    return con.execute(sql, [trade_date, min_amt_yi]).df()
+
+
+@st.cache_data(ttl=60)
 def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
     """即时统计当天全市场成交额分桶家数 + 每桶合计成交额（亿）。"""
     con = get_con(db_path)
@@ -1232,6 +1257,25 @@ def render_turnover(con_id: int, db_path: str) -> None:
             f"（前 {k} 只占全市场成交额一半）"
             + (f"｜ 拐点(肘部)≈{knee_v:.2f}亿（主体与长尾的边界）" if knee_v else "")
         )
+
+        # ── 门槛以上个股清单 ──────────────────────────────────────────
+        st.divider()
+        knee_label = f"🔴 焦点龙头区（≥拐点 {knee_v:.2f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
+        lt1, lt2 = st.tabs([
+            f"🟠 资金主力区（≥Pareto50% {pareto_v:.2f}亿）",
+            knee_label,
+        ])
+        with lt1:
+            dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
+            st.caption(f"共 {len(dfp)} 只，合计成交额约占全市场一半")
+            st.dataframe(dfp, use_container_width=True, hide_index=True)
+        with lt2:
+            if knee_v:
+                dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
+                st.caption(f"共 {len(dfk)} 只，长尾起点以上的焦点股")
+                st.dataframe(dfk, use_container_width=True, hide_index=True)
+            else:
+                st.info("当天未检出有效拐点")
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
     with tab2:
