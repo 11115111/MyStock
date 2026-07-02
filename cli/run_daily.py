@@ -120,9 +120,14 @@ def main(
             n = calc_sanxianhong_history(con, start_date, end_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
 
-        click.echo(f"[活跃度门槛/在榜] history {start_date} → {end_date}")
-        n = calc_active_history(con, start_date, end_date)
-        click.echo(f"  {n} rows into active_pool_daily")
+        try:
+            click.echo(f"[活跃度门槛/在榜] history {start_date} → {end_date}")
+            n = calc_active_history(con, start_date, end_date)
+            click.echo(f"  {n} rows into active_pool_daily")
+        except Exception as e:
+            import traceback
+            click.echo(f"  [活跃度] 跳过（失败）：{e}", err=True)
+            traceback.print_exc()
     else:
         if not target_date:
             row = con.execute("SELECT MAX(date) FROM raw_kline_daily").fetchone()
@@ -156,9 +161,14 @@ def main(
             n = calc_sanxianhong(con, target_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
 
-        click.echo(f"[活跃度门槛/在榜] {target_date}")
-        n = calc_active(con, target_date)
-        click.echo(f"  {n} rows into active_pool_daily")
+        try:
+            click.echo(f"[活跃度门槛/在榜] {target_date}")
+            n = calc_active(con, target_date)
+            click.echo(f"  {n} rows into active_pool_daily")
+        except Exception as e:
+            import traceback
+            click.echo(f"  [活跃度] 跳过（失败）：{e}", err=True)
+            traceback.print_exc()
 
     con.close()
     click.echo("done.")

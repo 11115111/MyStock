@@ -12,16 +12,17 @@ calc_active(date) = 区间计算的单日子集
 from __future__ import annotations
 
 import duckdb
-import numpy as np
 
 _HIST_BINS = 40
 
 
-def compute_thresholds(amounts_yi: np.ndarray) -> tuple[float, float | None, float, int]:
+def compute_thresholds(amounts_yi):
     """从当日全市场成交额（亿）算 (pareto_amt, knee_amt|None, total_amt, count)。
 
-    与 UI 的对数分布检测逻辑保持一致。
+    与 UI 的对数分布检测逻辑保持一致。numpy 延迟导入，避免抬高启动内存/依赖。
     """
+    import numpy as np
+
     vals = amounts_yi[amounts_yi > 0]
     n = int(vals.size)
     if n == 0:
@@ -60,6 +61,8 @@ def compute_thresholds(amounts_yi: np.ndarray) -> tuple[float, float | None, flo
 
 def _refresh_thresholds(con: duckdb.DuckDBPyConnection, start: str, end: str) -> int:
     """逐个交易日算门槛，写入 active_threshold_daily。返回处理天数。"""
+    import numpy as np
+
     dates = [str(r[0]) for r in con.execute(
         """SELECT DISTINCT k.date
            FROM raw_kline_daily k
