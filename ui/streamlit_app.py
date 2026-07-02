@@ -1,4 +1,8 @@
-"""三线红榜单可视化 — Streamlit app.
+"""A股情绪周期看板 — Streamlit app.
+
+模块：
+    📈 三线红榜单   — sanxianhong_daily 榜单 / 新上榜 / 退榜
+    🌡️ 市场宽度     — block_breadth_daily 按通达信二级行业的 NH-NL / High-Low Index / MA20 宽度
 
 Run from repo root:
     streamlit run rps/ui/streamlit_app.py -- --db /path/to/your.duckdb
@@ -9,6 +13,8 @@ import sys
 from pathlib import Path
 
 import duckdb
+import json
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -19,10 +25,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="三线红榜单",
+    page_title="A股情绪周期看板",
     page_icon="📈",
     layout="wide",
 )
+
+# 通达信二级行业过滤口径（与 load_industry 一致）
+_L2_FILTER = "i.block_type = 'tdx_research' AND i.block_level = 2"
 
 # ---------------------------------------------------------------------------
 # DB connection — cached per db path
@@ -44,7 +53,7 @@ def _db_path_from_args() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Data loaders
+# Data loaders — 三线红
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
@@ -134,12 +143,12 @@ def load_industry(_con_id: int, db_path: str) -> pd.DataFrame:
     """Return symbol → 所属行业 mapping (行业二级)."""
     con = get_con(db_path)
     try:
-        return con.execute("""
+        return con.execute(f"""
             SELECT bm.stock_symbol AS symbol,
-                   STRING_AGG(bi.block_name, ' / ' ORDER BY bi.block_name) AS 所属行业
+                   STRING_AGG(i.block_name, ' / ' ORDER BY i.block_name) AS 所属行业
             FROM raw_tdx_blocks_member bm
-            JOIN raw_tdx_blocks_info   bi ON bi.block_code = bm.block_code
-            WHERE bi.block_type = 'tdx_research' AND bi.block_level = 2
+            JOIN raw_tdx_blocks_info   i ON i.block_code = bm.block_code
+            WHERE {_L2_FILTER}
             GROUP BY bm.stock_symbol
         """).df()
     except Exception:
@@ -225,6 +234,311 @@ def load_exits(_con_id: int, db_path: str, trade_date: str, version: str) -> pd.
 
 
 # ---------------------------------------------------------------------------
+# Data loaders — 市场宽度（通达信二级行业）
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_breadth_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT trade_date FROM block_breadth_daily ORDER BY trade_date DESC LIMIT 250"
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
+def load_breadth_l2(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
+    """每个二级行业当日的宽度指标。"""
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT
+                b.block_name                    AS 行业,
+                b.member_count                  AS 成员数,
+                b.new_high_count                AS 新高,
+                b.new_low_count                 AS 新低,
+                b.nh_nl                         AS "NH-NL",
+                ROUND(b.high_low_index, 1)      AS "HL指数",
+                ROUND(b.high_low_index_ma10, 1) AS "HL指数MA10",
+                ROUND(b.breadth_ma20, 1)        AS "MA20占比",
+                b.above_ma20_count              AS "MA20上方家数"
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            WHERE b.trade_date = $1 AND {_L2_FILTER}
+            ORDER BY b.breadth_ma20 DESC
+        """, [trade_date]).df()
+    except Exception as e:
+        st.error(f"查询失败: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_breadth_series(_con_id: int, db_path: str, block_name: str) -> pd.DataFrame:
+    """单个二级行业的宽度时间序列。"""
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT
+                b.trade_date                    AS 日期,
+                b.nh_nl                          AS "NH-NL",
+                ROUND(b.high_low_index, 1)      AS "HL指数",
+                ROUND(b.high_low_index_ma10, 1) AS "HL指数MA10",
+                ROUND(b.breadth_ma20, 1)        AS "MA20占比"
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            WHERE i.block_name = $1 AND {_L2_FILTER}
+            ORDER BY b.trade_date
+        """, [block_name]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_breadth_heatmap(_con_id: int, db_path: str, metric_col: str, end_date: str | None = None, n_days: int = 30) -> pd.DataFrame:
+    """Last n_days up to end_date × 二级行业 pivot table for one breadth metric."""
+    _metric_map = {
+        "MA20占比":   "ROUND(b.breadth_ma20, 1)",
+        "NH-NL":      "b.nh_nl",
+        "HL指数":     "ROUND(b.high_low_index, 1)",
+        "HL指数MA10": "ROUND(b.high_low_index_ma10, 1)",
+        "新高":       "b.new_high_count",
+        "新低":       "b.new_low_count",
+    }
+    expr = _metric_map.get(metric_col, "ROUND(b.breadth_ma20, 1)")
+    date_filter = f"WHERE trade_date <= '{end_date}'" if end_date else ""
+    con = get_con(db_path)
+    try:
+        df = con.execute(f"""
+            WITH latest AS (
+                SELECT DISTINCT trade_date FROM block_breadth_daily
+                {date_filter}
+                ORDER BY trade_date DESC LIMIT {n_days}
+            )
+            SELECT
+                b.trade_date::VARCHAR   AS 日期,
+                i.block_name            AS 行业,
+                {expr}                  AS val
+            FROM block_breadth_daily b
+            JOIN raw_tdx_blocks_info i ON i.block_code = b.block_code
+            JOIN latest l              ON l.trade_date  = b.trade_date
+            WHERE {_L2_FILTER}
+        """).df()
+        if df.empty:
+            return pd.DataFrame()
+        pivot = df.pivot(index="日期", columns="行业", values="val")
+        pivot = pivot.sort_index(ascending=True)
+        return pivot
+    except Exception as e:
+        st.error(f"pivot 失败: {e}")
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# Data loaders — 情绪周期
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_sentiment_series(_con_id: int, db_path: str, days: int = 120) -> pd.DataFrame:
+    con = get_con(db_path)
+    try:
+        return con.execute(f"""
+            SELECT trade_date AS 日期,
+                   zt_count, dt_count, zbgc_count,
+                   ROUND(zt_seal_rate * 100, 1)  AS zt_seal_pct,
+                   ROUND(dt_seal_rate * 100, 1)  AS dt_seal_pct,
+                   max_consecutive, lianban_count,
+                   ROUND(prev_zt_return, 2)       AS prev_zt_ret,
+                   ROUND(prev_lianban_return, 2)  AS prev_lb_ret,
+                   ROUND(prev_zbgc_return, 2)     AS prev_zb_ret,
+                   break_count, break_risk_count,
+                   ROUND(break_risk_ratio * 100, 1) AS break_risk_pct
+            FROM sentiment_daily
+            ORDER BY trade_date DESC LIMIT {days}
+        """).df().iloc[::-1].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_pool_detail(_con_id: int, db_path: str, trade_date: str, pool: str) -> pd.DataFrame:
+    con = get_con(db_path)
+    table = {"涨停": "zt_pool_daily", "跌停": "dt_pool_daily", "炸板": "zbgc_pool_daily"}[pool]
+    try:
+        if pool == "涨停":
+            return con.execute("""
+                SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                       ROUND(pct_change,2) AS 涨跌幅,
+                       consecutive AS 连板数,
+                       open_count AS 炸板次数,
+                       first_seal_time AS 首封时间,
+                       last_seal_time AS 尾封时间,
+                       ROUND(seal_amount/1e8,2) AS 封板资金亿,
+                       zt_stat AS 涨停统计, industry AS 行业
+                FROM zt_pool_daily WHERE trade_date=$1
+                ORDER BY consecutive DESC, seal_amount DESC
+            """, [trade_date]).df()
+        if pool == "跌停":
+            return con.execute("""
+                SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                       ROUND(pct_change,2) AS 涨跌幅,
+                       consecutive_dt AS 连续跌停,
+                       open_count AS 开板次数,
+                       last_seal_time AS 尾封时间,
+                       ROUND(seal_amount/1e8,2) AS 封单资金亿,
+                       industry AS 行业
+                FROM dt_pool_daily WHERE trade_date=$1
+                ORDER BY consecutive_dt DESC, seal_amount DESC
+            """, [trade_date]).df()
+        # 炸板
+        return con.execute("""
+            SELECT symbol AS 代码, name AS 名称, close AS 现价,
+                   ROUND(pct_change,2) AS 涨跌幅,
+                   open_count AS 炸板次数,
+                   first_seal_time AS 首封时间,
+                   ROUND(amplitude,1) AS 振幅,
+                   zt_stat AS 涨停统计, industry AS 行业
+            FROM zbgc_pool_daily WHERE trade_date=$1
+            ORDER BY open_count DESC
+        """, [trade_date]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_sentiment_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT trade_date FROM sentiment_daily ORDER BY trade_date DESC LIMIT 250"
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Module: 情绪周期
+# ---------------------------------------------------------------------------
+
+def render_sentiment(con_id: int, db_path: str) -> None:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    dates = load_sentiment_dates(con_id, db_path)
+    if not dates:
+        st.warning("sentiment_daily 暂无数据，请先同步股池并运行计算")
+        return
+
+    # 顶部日期选择（用于池详情）
+    import datetime
+    all_pool_dates = sorted({d for d in dates})
+    tc1, tc2 = st.columns([2, 5])
+    picked = tc1.date_input("查看日期（股池详情）", value=datetime.date.fromisoformat(dates[0]),
+                             min_value=datetime.date.fromisoformat(dates[-1]),
+                             max_value=datetime.date.fromisoformat(dates[0]), key="sent_date")
+    selected_date = picked.isoformat()
+    if selected_date not in {d for d in dates}:
+        valid = [d for d in sorted(dates) if d <= selected_date]
+        selected_date = valid[-1] if valid else dates[0]
+
+    df = load_sentiment_series(con_id, db_path)
+    if df.empty:
+        st.info("暂无情绪数据")
+        return
+
+    df["日期"] = pd.to_datetime(df["日期"])
+
+    # ── 统计概览（选中日当日）──────────────────────────────────────────
+    row = df[df["日期"].dt.date.astype(str) == selected_date]
+    if not row.empty:
+        r = row.iloc[0]
+        m1,m2,m3,m4,m5,m6,m7 = st.columns(7)
+        m1.metric("涨停", int(r["zt_count"]) if pd.notna(r["zt_count"]) else "-")
+        m2.metric("跌停", int(r["dt_count"]) if pd.notna(r["dt_count"]) else "-")
+        m3.metric("炸板", int(r["zbgc_count"]) if pd.notna(r["zbgc_count"]) else "-")
+        m4.metric("涨停封板率", f"{r['zt_seal_pct']:.1f}%" if pd.notna(r["zt_seal_pct"]) else "-")
+        m5.metric("最高连板", int(r["max_consecutive"]) if pd.notna(r["max_consecutive"]) else "-")
+        m6.metric("昨涨停今收益", f"{r['prev_zt_ret']:.2f}%" if pd.notna(r["prev_zt_ret"]) else "-")
+        m7.metric("断板风险率", f"{r['break_risk_pct']:.1f}%" if pd.notna(r["break_risk_pct"]) else "-")
+
+    st.divider()
+
+    # ── 时序图 ─────────────────────────────────────────────────────────
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        subplot_titles=("涨跌停家数", "封板率 %", "T+1 收益 %", "断板风险 %"),
+        vertical_spacing=0.07,
+        row_heights=[0.3, 0.2, 0.25, 0.25],
+    )
+    x = df["日期"]
+
+    # 1. 涨跌停家数
+    fig.add_trace(go.Bar(x=x, y=df["zt_count"],  name="涨停", marker_color="#d62728"), row=1, col=1)
+    fig.add_trace(go.Bar(x=x, y=-df["dt_count"], name="跌停", marker_color="#1f77b4"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["zbgc_count"], name="炸板",
+                             mode="lines", line=dict(color="orange", width=1.5)), row=1, col=1)
+
+    # 2. 封板率
+    fig.add_trace(go.Scatter(x=x, y=df["zt_seal_pct"], name="涨停封板率",
+                             mode="lines", line=dict(color="#d62728", width=1.5)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["dt_seal_pct"], name="跌停封板率",
+                             mode="lines", line=dict(color="#1f77b4", width=1.5, dash="dot")), row=2, col=1)
+
+    # 3. T+1 收益
+    fig.add_trace(go.Scatter(x=x, y=df["prev_zt_ret"], name="昨涨停今收益",
+                             mode="lines", line=dict(color="#d62728", width=1.5)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["prev_lb_ret"], name="昨连板今收益",
+                             mode="lines", line=dict(color="purple", width=1.5)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["prev_zb_ret"], name="昨炸板今收益",
+                             mode="lines", line=dict(color="orange", width=1.5)), row=3, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
+
+    # 4. 断板风险
+    fig.add_trace(go.Scatter(x=x, y=df["break_risk_pct"], name="断板风险%",
+                             mode="lines", fill="tozeroy",
+                             line=dict(color="crimson", width=1.5)), row=4, col=1)
+
+    fig.update_layout(height=700, showlegend=True,
+                      legend=dict(orientation="h", y=-0.05),
+                      margin=dict(l=40, r=20, t=40, b=40),
+                      barmode="relative")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── 当日股池详情 ──────────────────────────────────────────────────
+    st.subheader(f"股池详情 — {selected_date}")
+    tab_zt, tab_dt, tab_zb = st.tabs(["📈 涨停池", "📉 跌停池", "💥 炸板池"])
+
+    with tab_zt:
+        d = load_pool_detail(con_id, db_path, selected_date, "涨停")
+        if d.empty:
+            st.info("当日无涨停数据（需先同步股池）")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+    with tab_dt:
+        d = load_pool_detail(con_id, db_path, selected_date, "跌停")
+        if d.empty:
+            st.info("当日无跌停数据")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+    with tab_zb:
+        d = load_pool_detail(con_id, db_path, selected_date, "炸板")
+        if d.empty:
+            st.info("当日无炸板数据")
+        else:
+            st.caption(f"共 {len(d)} 只")
+            st.dataframe(d, use_container_width=True, height=500, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Shared column config
 # ---------------------------------------------------------------------------
 
@@ -232,9 +546,9 @@ _COL_CFG = {
     "代码":         st.column_config.TextColumn("代码", width="small"),
     "名称":         st.column_config.TextColumn("名称", width="small"),
     "所属行业":     st.column_config.TextColumn("所属行业", width="medium"),
-    "RPS50":        st.column_config.NumberColumn("RPS50",  format="%.2f"),   # 改为浮点数格式
-    "RPS120":       st.column_config.NumberColumn("RPS120", format="%.2f"),   # 改为浮点数格式
-    "RPS250":       st.column_config.NumberColumn("RPS250", format="%.2f"),   # 改为浮点数格式
+    "RPS50":        st.column_config.NumberColumn("RPS50",  format="%.2f"),
+    "RPS120":       st.column_config.NumberColumn("RPS120", format="%.2f"),
+    "RPS250":       st.column_config.NumberColumn("RPS250", format="%.2f"),
     "近高比":       st.column_config.NumberColumn("近高比", format="%.3f"),
     "连续天数":     st.column_config.NumberColumn("连续天数", format="%d"),
     "离场前连续天数": st.column_config.NumberColumn("离场前连续天数", format="%d"),
@@ -248,58 +562,42 @@ _COL_CFG = {
     "流通市值亿":   st.column_config.NumberColumn("流通市值(亿)", format="%.1f"),
 }
 
+_BREADTH_COL_CFG = {
+    "行业":        st.column_config.TextColumn("行业", width="medium"),
+    "成员数":      st.column_config.NumberColumn("成员数", format="%d"),
+    "新高":        st.column_config.NumberColumn("新高", format="%d"),
+    "新低":        st.column_config.NumberColumn("新低", format="%d"),
+    "NH-NL":       st.column_config.NumberColumn("NH-NL", format="%d"),
+    "HL指数":      st.column_config.NumberColumn("HL指数", format="%.1f"),
+    "HL指数MA10":  st.column_config.NumberColumn("HL指数MA10", format="%.1f"),
+    "MA20占比":    st.column_config.NumberColumn("MA20占比", format="%.1f%%"),
+    "MA20上方家数": st.column_config.NumberColumn("MA20上方家数", format="%d"),
+}
+
 
 # ---------------------------------------------------------------------------
-# Main UI
+# Module: 三线红榜单
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    st.title("📈 三线红榜单")
-
-    db_path = _db_path_from_args()
-
-    # Sidebar — DB path input if not passed via --db
-    with st.sidebar:
-        st.header("数据源")
-        if db_path:
-            st.success(f"已连接: `{db_path}`")
-        else:
-            db_path = st.text_input("DuckDB 文件路径", placeholder="/path/to/your.duckdb")
-        if not db_path:
-            st.info("请输入数据库路径或通过 `-- --db /path/to/db` 启动")
-            return
-
-        st.divider()
-        st.header("筛选")
-
-    # Attempt DB connection
-    try:
-        con = get_con(db_path)
-        con_id = id(con)
-    except Exception as e:
-        st.error(f"无法连接数据库: {e}")
-        return
-
-    # Available dates
+def render_sanxianhong(con_id: int, db_path: str) -> None:
     dates = load_dates(con_id, db_path)
     if not dates:
         st.warning("sanxianhong_daily 暂无数据，请先运行 `--init-history`")
         return
 
-    with st.sidebar:
-        selected_date = st.selectbox("日期", dates, index=0)
-        version = st.selectbox("版本", ["strict", "loose"], index=0,
-                               help="strict: rps50/120/250 全部达标 + h_div_hhv150\nloose: 任一RPS ≥ 阈值 + h_div_hhv250")
-        blocks = load_blocks(con_id, db_path, selected_date, version)
-        selected_block = st.selectbox("板块筛选", blocks, index=0)
-
-        st.divider()
-        sort_col = st.selectbox(
-            "排序列",
-            ["连续天数", "60日在榜", "上榜次数", "RPS50", "RPS120", "RPS250", "近高比", "流通市值亿", "涨跌幅", "换手率"],
-            index=0,
-        )
-        sort_asc = st.checkbox("升序", value=False)
+    # 顶部筛选条
+    c1, c2, c3, c4, c5 = st.columns([2, 1.5, 2, 2, 1])
+    selected_date = c1.selectbox("日期", dates, index=0, key="szh_date")
+    version = c2.selectbox("版本", ["strict", "loose"], index=0, key="szh_ver",
+                           help="strict: rps50/120/250 全部达标 + h_div_hhv150\nloose: 任一RPS ≥ 阈值 + h_div_hhv250")
+    blocks = load_blocks(con_id, db_path, selected_date, version)
+    selected_block = c3.selectbox("板块筛选", blocks, index=0, key="szh_block")
+    sort_col = c4.selectbox(
+        "排序列",
+        ["连续天数", "60日在榜", "上榜次数", "RPS50", "RPS120", "RPS250", "近高比", "流通市值亿", "涨跌幅", "换手率"],
+        index=0, key="szh_sort",
+    )
+    sort_asc = c5.checkbox("升序", value=False, key="szh_asc")
 
     # Load data
     df = load_sanxianhong(con_id, db_path, selected_date, version, selected_block)
@@ -314,11 +612,10 @@ def main() -> None:
         st.info(f"{selected_date} 暂无三线红数据")
         return
 
-    # Sort main table
     if sort_col in df.columns:
         df = df.sort_values(sort_col, ascending=sort_asc)
 
-    # Summary metrics — 6 columns
+    # Summary metrics
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("在榜股票数", len(df))
     col2.metric("平均连续天数", f"{df['连续天数'].mean():.1f}")
@@ -329,7 +626,6 @@ def main() -> None:
 
     st.divider()
 
-    # Main table
     st.dataframe(
         df.reset_index(drop=True),
         use_container_width=True,
@@ -338,7 +634,6 @@ def main() -> None:
         hide_index=True,
     )
 
-    # Download main table
     csv = df.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         label="下载 CSV",
@@ -349,29 +644,1106 @@ def main() -> None:
 
     st.divider()
 
-    # New entries
     with st.expander(f"🟢 今日新上榜 ({len(df_new)} 只)", expanded=True):
         if df_new.empty:
             st.info("今日无新上榜")
         else:
-            st.dataframe(
-                df_new.reset_index(drop=True),
-                use_container_width=True,
-                column_config=_COL_CFG,
-                hide_index=True,
-            )
+            st.dataframe(df_new.reset_index(drop=True), use_container_width=True,
+                         column_config=_COL_CFG, hide_index=True)
 
-    # Exits
     with st.expander(f"🔴 今日退榜 ({len(df_exit)} 只)", expanded=True):
         if df_exit.empty:
             st.info("今日无退榜")
         else:
-            st.dataframe(
-                df_exit.reset_index(drop=True),
-                use_container_width=True,
-                column_config=_COL_CFG,
-                hide_index=True,
+            st.dataframe(df_exit.reset_index(drop=True), use_container_width=True,
+                         column_config=_COL_CFG, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Module: 市场宽度（通达信二级行业）
+# ---------------------------------------------------------------------------
+
+def render_breadth(con_id: int, db_path: str) -> None:
+    import datetime
+    import streamlit.components.v1 as components
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+
+    dates = load_breadth_dates(con_id, db_path)
+    if not dates:
+        st.warning("block_breadth_daily 暂无数据，请先运行 `--init-history`")
+        return
+
+    date_objs = sorted({datetime.date.fromisoformat(d) for d in dates})
+    min_d, max_d = date_objs[0], date_objs[-1]
+    date_set = {d.isoformat() for d in date_objs}
+
+    # ── 顶部控件行 ─────────────────────────────────────────────────────
+    tc1, tc2 = st.columns([2, 3])
+    picked = tc1.date_input(
+        "日期", value=max_d, min_value=min_d, max_value=max_d, key="bw_date",
+    )
+    # 若选中日期不在数据中，向前找最近有效日期
+    selected_date = picked.isoformat()
+    if selected_date not in date_set:
+        valid = [d for d in sorted(date_set) if d <= selected_date]
+        selected_date = valid[-1] if valid else sorted(date_set)[-1]
+
+    hm_metric = tc2.selectbox(
+        "热力表指标", ["MA20占比", "NH-NL", "HL指数MA10", "HL指数", "新高", "新低"],
+        index=0, key="bw_hm_metric",
+    )
+
+    # ── 全市场统计概览 ─────────────────────────────────────────────────
+    df = load_breadth_l2(con_id, db_path, selected_date)
+    if df.empty:
+        st.info(f"{selected_date} 暂无市场宽度数据")
+        return
+
+    total_members = int(df["成员数"].sum())
+    total_nh      = int(df["新高"].sum())
+    total_nl      = int(df["新低"].sum())
+    total_above   = int(df["MA20上方家数"].sum())
+    mkt_ma20 = total_above / total_members * 100 if total_members else 0
+    mkt_hl   = total_nh / (total_nh + total_nl) * 100 if (total_nh + total_nl) else 0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("二级行业数", len(df))
+    m2.metric("全市场新高", total_nh)
+    m3.metric("全市场新低", total_nl)
+    m4.metric("全市场 NH-NL", total_nh - total_nl)
+    m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
+    st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}")
+
+    st.divider()
+
+    # ── 热力表（统计下方）─────────────────────────────────────────────
+    pivot = load_breadth_heatmap(con_id, db_path, hm_metric, end_date=selected_date)
+    if not pivot.empty:
+        t = pivot.T
+        t.columns = [d[5:] for d in t.columns]
+        cmap_fn = mpl.colormaps["coolwarm_r" if hm_metric == "新低" else "coolwarm"]
+        vals = t.values.astype(float)
+        colors = []
+        for ci in range(vals.shape[1]):
+            col = vals[:, ci]
+            vmin, vmax = np.nanmin(col), np.nanmax(col)
+            denom = vmax - vmin if vmax > vmin else 1.0
+            normed = (col - vmin) / denom
+            colors.append([mcolors.to_hex(cmap_fn(float(v))) for v in normed])
+        colors_t = [[colors[ci][ri] for ci in range(len(colors))] for ri in range(len(t))]
+
+        rows_json   = json.dumps(t.index.tolist())
+        cols_json   = json.dumps(t.columns.tolist())
+        vals_json   = json.dumps([[int(v) if not np.isnan(v) else None for v in row] for row in vals])
+        colors_json = json.dumps(colors_t)
+        n_rows = len(t)
+        hdr_h, row_h = 70, 18
+        total_h = hdr_h + n_rows * row_h + 20
+
+        html = f"""
+<style>
+  #hm-wrap {{font-family:monospace;font-size:10px;width:100%;overflow:hidden}}
+  #hm-table {{border-collapse:collapse;width:100%}}
+  #hm-table td {{padding:0 3px;line-height:{row_h}px;height:{row_h}px;text-align:center;white-space:nowrap;cursor:default}}
+  #hm-table th.idx {{padding:0 4px;text-align:left;vertical-align:bottom;white-space:nowrap;height:{hdr_h}px}}
+  #hm-table th.col-hdr {{height:{hdr_h}px;padding:0;vertical-align:bottom;text-align:left;cursor:pointer;white-space:nowrap}}
+  #hm-table th.col-hdr div {{transform:rotate(-45deg);transform-origin:left bottom;width:1.5em;margin-left:8px;padding-bottom:2px}}
+  #hm-table th.col-hdr.asc::after  {{content:" ▲";font-size:8px}}
+  #hm-table th.col-hdr.desc::after {{content:" ▼";font-size:8px}}
+  #hm-table tr:hover td {{outline:1px solid #888}}
+</style>
+<div id="hm-wrap"><table id="hm-table"><thead><tr id="hdr-row"></tr></thead><tbody id="body"></tbody></table></div>
+<script>
+(function(){{
+  const rows   = {rows_json};
+  const cols   = {cols_json};
+  const vals   = {vals_json};
+  const colors = {colors_json};
+  let sortCol = cols.length - 1;
+  let sortAsc = true;
+  function contrast(hex) {{
+    const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+    return (0.299*r + 0.587*g + 0.114*b) / 255 > 0.55 ? '#000' : '#fff';
+  }}
+  function render() {{
+    const hdr = document.getElementById('hdr-row');
+    hdr.innerHTML = '';
+    const th0 = document.createElement('th');
+    th0.className = 'idx';
+    hdr.appendChild(th0);
+    cols.forEach((c, ci) => {{
+      const th = document.createElement('th');
+      th.className = 'col-hdr' + (ci===sortCol ? (sortAsc?' asc':' desc') : '');
+      th.innerHTML = '<div>' + c + '</div>';
+      th.onclick = () => {{
+        if (sortCol === ci) {{ sortAsc = !sortAsc; }}
+        else {{ sortCol = ci; sortAsc = true; }}
+        render();
+      }};
+      hdr.appendChild(th);
+    }});
+    const order = rows.map((_, i) => i).sort((a, b) => {{
+      const av = vals[a][sortCol], bv = vals[b][sortCol];
+      if (av===null && bv===null) return 0;
+      if (av===null) return 1;
+      if (bv===null) return -1;
+      return sortAsc ? av - bv : bv - av;
+    }});
+    const tbody = document.getElementById('body');
+    tbody.innerHTML = '';
+    order.forEach(ri => {{
+      const tr = document.createElement('tr');
+      const td0 = document.createElement('td');
+      td0.style.textAlign = 'left';
+      td0.textContent = rows[ri];
+      tr.appendChild(td0);
+      vals[ri].forEach((v, ci) => {{
+        const td = document.createElement('td');
+        td.style.background = colors[ri][ci];
+        td.style.color = contrast(colors[ri][ci]);
+        td.textContent = v === null ? '' : v;
+        tr.appendChild(td);
+      }});
+      tbody.appendChild(tr);
+    }});
+  }}
+  render();
+}})();
+</script>
+"""
+        components.html(html, height=total_h, scrolling=False)
+
+    st.divider()
+
+    # ── 行业明细表 ─────────────────────────────────────────────────────
+    metric_choice = st.selectbox(
+        "明细排序", ["MA20占比", "NH-NL", "HL指数MA10", "新高", "新低"],
+        index=0, key="bw_metric",
+    )
+    st.dataframe(
+        df.sort_values(metric_choice, ascending=False).reset_index(drop=True),
+        use_container_width=True,
+        height=480,
+        column_config=_BREADTH_COL_CFG,
+        hide_index=True,
+    )
+    csv = df.to_csv(index=False, encoding="utf-8-sig")
+    st.download_button("下载 CSV", data=csv,
+                       file_name=f"breadth_l2_{selected_date}.csv", mime="text/csv")
+
+    st.divider()
+
+    # ── 单行业时间序列 ─────────────────────────────────────────────────
+    st.subheader("行业宽度走势")
+    industries = df.sort_values("MA20占比", ascending=False)["行业"].tolist()
+    sel = st.selectbox("选择二级行业", industries, index=0, key="bw_series")
+    series = load_breadth_series(con_id, db_path, sel)
+    if series.empty:
+        st.info("无走势数据")
+        return
+
+    series = series.set_index("日期")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.caption("HL指数 / HL指数MA10 / MA20占比")
+        st.line_chart(series[["HL指数", "HL指数MA10", "MA20占比"]], height=300)
+    with cc2:
+        st.caption("NH-NL（新高 - 新低）")
+        st.bar_chart(series[["NH-NL"]], height=300)
+
+
+# ---------------------------------------------------------------------------
+# 自选 RPS 筛选
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60)
+def load_screen_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    rows = con.execute(
+        "SELECT DISTINCT trade_date FROM rps_stock_daily ORDER BY trade_date DESC LIMIT 120"
+    ).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+@st.cache_data(ttl=60)
+def load_screen(
+    _con_id: int, db_path: str, trade_date: str,
+    rps50_min: float, rps120_min: float, rps250_min: float,
+    hhv_ratio_min: float, mode: str,
+) -> pd.DataFrame:
+    con = get_con(db_path)
+    if mode == "strict":
+        where = (
+            f"r.rps50 >= {rps50_min} AND r.rps120 >= {rps120_min} "
+            f"AND r.rps250 >= {rps250_min} AND r.h_div_hhv150 >= {hhv_ratio_min}"
+        )
+        hhv_col = "r.h_div_hhv150 AS 近高比150"
+    else:
+        where = (
+            f"(r.rps50 >= {rps50_min} OR r.rps120 >= {rps120_min} OR r.rps250 >= {rps250_min}) "
+            f"AND r.h_div_hhv250 >= {hhv_ratio_min}"
+        )
+        hhv_col = "r.h_div_hhv250 AS 近高比250"
+    sql = f"""
+        SELECT r.symbol, n.name AS 名称,
+               ROUND(r.rps50,2)  AS rps50,
+               ROUND(r.rps120,2) AS rps120,
+               ROUND(r.rps250,2) AS rps250,
+               {hhv_col},
+               ROUND(r.close_bfq,2) AS 现价,
+               ROUND(r.change_pct,2) AS 涨跌幅,
+               ROUND(r.floatmv/1e8,1) AS 流通市值亿,
+               ROUND(r.turnover,2) AS 换手率,
+               (s.symbol IS NOT NULL) AS 在榜
+        FROM rps_stock_daily r
+        JOIN raw_symbol_name n ON n.symbol = r.symbol
+        LEFT JOIN sanxianhong_daily s
+               ON s.symbol = r.symbol AND s.trade_date = r.trade_date
+              AND s.formula_version = $2
+        WHERE r.trade_date = $1 AND {where}
+          AND n.name NOT LIKE '%ST%' AND n.name NOT LIKE '%退%'
+        ORDER BY 在榜 DESC, r.rps50 DESC
+    """
+    return con.execute(sql, [trade_date, mode]).df()
+
+
+@st.cache_data(ttl=60)
+def load_board_only(
+    _con_id: int, db_path: str, trade_date: str,
+    rps50_min: float, rps120_min: float, rps250_min: float,
+    hhv_ratio_min: float, mode: str,
+) -> pd.DataFrame:
+    """榜单有、但不满足自选条件的股票。"""
+    con = get_con(db_path)
+    if mode == "strict":
+        not_where = (
+            f"NOT (r.rps50 >= {rps50_min} AND r.rps120 >= {rps120_min} "
+            f"AND r.rps250 >= {rps250_min} AND r.h_div_hhv150 >= {hhv_ratio_min})"
+        )
+        hhv_col = "r.h_div_hhv150 AS 近高比150"
+    else:
+        not_where = (
+            f"NOT ((r.rps50 >= {rps50_min} OR r.rps120 >= {rps120_min} OR r.rps250 >= {rps250_min}) "
+            f"AND r.h_div_hhv250 >= {hhv_ratio_min})"
+        )
+        hhv_col = "r.h_div_hhv250 AS 近高比250"
+    sql = f"""
+        SELECT r.symbol, s.name AS 名称,
+               ROUND(r.rps50,2)  AS rps50,
+               ROUND(r.rps120,2) AS rps120,
+               ROUND(r.rps250,2) AS rps250,
+               {hhv_col},
+               ROUND(r.close_bfq,2) AS 现价,
+               ROUND(r.change_pct,2) AS 涨跌幅,
+               ROUND(r.floatmv/1e8,1) AS 流通市值亿,
+               ROUND(r.turnover,2) AS 换手率
+        FROM sanxianhong_daily s
+        JOIN rps_stock_daily r ON r.symbol = s.symbol AND r.trade_date = s.trade_date
+        WHERE s.trade_date = $1 AND s.formula_version = $2
+          AND {not_where}
+        ORDER BY r.rps50 DESC
+    """
+    return con.execute(sql, [trade_date, mode]).df()
+
+
+def render_screen(con_id: int, db_path: str) -> None:
+    dates = load_screen_dates(con_id, db_path)
+    if not dates:
+        st.warning("rps_stock_daily 暂无数据，请先运行 `--init-history`")
+        return
+
+    # ── 控件行 ────────────────────────────────────────────────────────
+    c1, c2 = st.columns([2, 1])
+    selected_date = c1.selectbox("日期", dates, index=0, key="sc_date")
+    mode = c2.radio("模式", ["strict", "loose"], horizontal=True, key="sc_mode")
+
+    st.divider()
+    s1, s2, s3, s4, s5 = st.columns(5)
+    rps50_min  = s1.number_input("RPS50 ≥",  min_value=0.0, max_value=99.0, value=90.0, step=0.1, format="%.1f", key="sc_rps50")
+    rps120_min = s2.number_input("RPS120 ≥", min_value=0.0, max_value=99.0, value=93.0, step=0.1, format="%.1f", key="sc_rps120")
+    rps250_min = s3.number_input("RPS250 ≥", min_value=0.0, max_value=99.0, value=95.0, step=0.1, format="%.1f", key="sc_rps250")
+    hhv_min    = s4.number_input("近高比 ≥", min_value=0.0, max_value=1.0,  value=0.85, step=0.01, format="%.2f", key="sc_hhv")
+    run        = s5.button("查询", type="primary", use_container_width=True, key="sc_run")
+
+    # ── 结果分组显示 ──────────────────────────────────────────────────
+    if run:
+        df = load_screen(con_id, db_path, selected_date,
+                         float(rps50_min), float(rps120_min), float(rps250_min),
+                         float(hhv_min), mode)
+        df_board_only = load_board_only(con_id, db_path, selected_date,
+                                        float(rps50_min), float(rps120_min), float(rps250_min),
+                                        float(hhv_min), mode)
+        st.session_state["sc_result"] = df
+        st.session_state["sc_board_only"] = df_board_only
+
+    df = st.session_state.get("sc_result")
+    df_board_only = st.session_state.get("sc_board_only", pd.DataFrame())
+    if df is not None:
+        cols = [c for c in df.columns if c != "在榜"]
+        on_board  = df[df["在榜"] == True][cols].reset_index(drop=True)
+        off_board = df[df["在榜"] == False][cols].reset_index(drop=True)
+
+        t1, t2, t3 = st.tabs([
+            f"自选 ∩ 在榜 ({len(on_board)})",
+            f"自选独有 ({len(off_board)})",
+            f"榜单独有 ({len(df_board_only)})",
+        ])
+        with t1:
+            if on_board.empty:
+                st.info("无")
+            else:
+                st.dataframe(on_board, use_container_width=True, hide_index=True)
+        with t2:
+            if off_board.empty:
+                st.info("无")
+            else:
+                st.dataframe(off_board, use_container_width=True, hide_index=True)
+        with t3:
+            if df_board_only.empty:
+                st.info("无")
+            else:
+                st.dataframe(df_board_only, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# 成交额分布（即时查 raw_basic_daily）
+# ---------------------------------------------------------------------------
+
+# 成交额分桶（单位：亿元），(下界, 上界或None, 标签)
+_AMT_BUCKETS = [
+    (0,    0.5,  "<0.5亿"),
+    (0.5,  1,    "0.5-1亿"),
+    (1,    2,    "1-2亿"),
+    (2,    3,    "2-3亿"),
+    (3,    5,    "3-5亿"),
+    (5,    10,   "5-10亿"),
+    (10,   20,   "10-20亿"),
+    (20,   50,   "20-50亿"),
+    (50,   None, ">50亿"),
+]
+
+
+@st.cache_data(ttl=60)
+def load_turnover_dates(_con_id: int, db_path: str) -> list[str]:
+    con = get_con(db_path)
+    rows = con.execute(
+        "SELECT DISTINCT date FROM raw_kline_daily ORDER BY date DESC LIMIT 120"
+    ).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+@st.cache_data(ttl=60)
+def load_turnover_values(_con_id: int, db_path: str, trade_date: str) -> np.ndarray:
+    """当天所有股票成交额（亿），用于对数分布与分位数分析。"""
+    con = get_con(db_path)
+    rows = con.execute("""
+        SELECT k.amount / 1e8 AS amt_yi
+        FROM raw_kline_daily k
+        JOIN stock_pool sp ON sp.symbol = k.symbol
+        WHERE k.date = $1 AND k.amount > 0
+        ORDER BY amt_yi
+    """, [trade_date]).fetchall()
+    return np.array([r[0] for r in rows], dtype=float)
+
+
+@st.cache_data(ttl=60)
+def load_active_stocks(_con_id: int, db_path: str, trade_date: str,
+                       min_amt_yi: float) -> pd.DataFrame:
+    """成交额 ≥ 门槛的股票清单，交叉 RPS（若已计算）。"""
+    con = get_con(db_path)
+    sql = """
+        SELECT k.symbol AS 代码,
+               sp.name   AS 名称,
+               ROUND(k.amount / 1e8, 2) AS 成交额亿,
+               ROUND(r.rps50, 1)  AS rps50,
+               ROUND(r.rps120, 1) AS rps120,
+               ROUND(r.rps250, 1) AS rps250,
+               ROUND(r.change_pct, 2) AS 涨跌幅,
+               ROUND(r.close_bfq, 2)  AS 现价,
+               ROUND(r.floatmv / 1e8, 1) AS 流通市值亿
+        FROM raw_kline_daily k
+        JOIN stock_pool sp ON sp.symbol = k.symbol
+        LEFT JOIN rps_stock_daily r
+               ON r.symbol = k.symbol AND r.trade_date = k.date
+        WHERE k.date = $1 AND k.amount / 1e8 >= $2
+        ORDER BY k.amount DESC
+    """
+    return con.execute(sql, [trade_date, min_amt_yi]).df()
+
+
+@st.cache_data(ttl=60)
+def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> pd.DataFrame:
+    """某日某分区在榜个股（含连续天数），标注是否新进榜。"""
+    con = get_con(db_path)
+    try:
+        return con.execute("""
+            SELECT symbol AS 代码, name AS 名称,
+                   amount_yi AS 成交额亿,
+                   rps50, rps120, rps250,
+                   change_pct AS 涨跌幅, close_bfq AS 现价,
+                   consecutive_days AS 连续天数, join_date AS 本轮进榜,
+                   (consecutive_days = 1) AS 新进榜
+            FROM active_pool_daily
+            WHERE trade_date = $1 AND zone = $2
+            ORDER BY 成交额亿 DESC
+        """, [trade_date, zone]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def load_active_exits(_con_id: int, db_path: str, trade_date: str, zone: str) -> pd.DataFrame:
+    """退榜：上一交易日在榜、今日不在榜。"""
+    con = get_con(db_path)
+    try:
+        prev = con.execute("""
+            SELECT MAX(trade_date) FROM active_pool_daily
+            WHERE trade_date < $1 AND zone = $2
+        """, [trade_date, zone]).fetchone()
+        if not prev or not prev[0]:
+            return pd.DataFrame()
+        return con.execute("""
+            SELECT p.symbol AS 代码, p.name AS 名称,
+                   p.amount_yi AS 昨成交额亿, p.consecutive_days AS 昨连续天数
+            FROM active_pool_daily p
+            WHERE p.trade_date = $2 AND p.zone = $3
+              AND NOT EXISTS (
+                  SELECT 1 FROM active_pool_daily t
+                  WHERE t.trade_date = $1 AND t.zone = $3 AND t.symbol = p.symbol
+              )
+            ORDER BY p.amount_yi DESC
+        """, [trade_date, prev[0], zone]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
+    """即时统计当天全市场成交额分桶家数 + 每桶合计成交额（亿）。"""
+    con = get_con(db_path)
+    case_bucket = "CASE\n"
+    for i, (lo, hi, _label) in enumerate(_AMT_BUCKETS):
+        amt_hi = "" if hi is None else f" AND amt_yi < {hi}"
+        case_bucket += f"  WHEN amt_yi >= {lo}{amt_hi} THEN {i}\n"
+    case_bucket += "END"
+    sql = f"""
+        WITH base AS (
+            SELECT k.amount / 1e8 AS amt_yi
+            FROM raw_kline_daily k
+            JOIN stock_pool sp ON sp.symbol = k.symbol   -- 只统计股票，排除指数/ETF/板块
+            WHERE k.date = $1 AND k.amount > 0
+        )
+        SELECT {case_bucket} AS bucket_idx,
+               COUNT(*)              AS 家数,
+               ROUND(SUM(amt_yi), 1) AS 成交额亿
+        FROM base
+        GROUP BY bucket_idx
+    """
+    df = con.execute(sql, [trade_date]).df()
+    labels = [b[2] for b in _AMT_BUCKETS]
+    out = pd.DataFrame({"区间": labels, "家数": 0, "成交额亿": 0.0})
+    for _, r in df.iterrows():
+        if pd.notna(r["bucket_idx"]):
+            out.loc[int(r["bucket_idx"]), "家数"] = int(r["家数"])
+            out.loc[int(r["bucket_idx"]), "成交额亿"] = float(r["成交额亿"])
+    return out
+
+
+def render_turnover(con_id: int, db_path: str) -> None:
+    import plotly.graph_objects as go
+
+    dates = load_turnover_dates(con_id, db_path)
+    if not dates:
+        st.warning("raw_kline_daily 暂无数据，请先到 ⚙️ 数据管理 初始化行情")
+        return
+
+    # dates 按降序（最新在前）。以 selectbox 的 state key(tv_date) 为唯一真相，
+    # 前/后一日按钮直接改写它（keyed widget 实例化前写入才生效）
+    if st.session_state.get("tv_date") not in dates:
+        st.session_state["tv_date"] = dates[0]
+    idx = dates.index(st.session_state["tv_date"])
+
+    bcol1, bcol2, bcol3, bcol4 = st.columns([1, 1, 3, 1])
+    if bcol1.button("◀ 前一日", use_container_width=True, key="tv_prev",
+                    disabled=idx >= len(dates) - 1):
+        st.session_state["tv_date"] = dates[idx + 1]
+        st.rerun()
+    if bcol2.button("后一日 ▶", use_container_width=True, key="tv_next",
+                    disabled=idx <= 0):
+        st.session_state["tv_date"] = dates[idx - 1]
+        st.rerun()
+    if bcol4.button("最新", use_container_width=True, key="tv_latest", disabled=idx == 0):
+        st.session_state["tv_date"] = dates[0]
+        st.rerun()
+    selected_date = bcol3.selectbox("日期", dates, key="tv_date",
+                                    label_visibility="collapsed")
+
+    vals = load_turnover_values(con_id, db_path, selected_date)
+    if vals.size == 0:
+        st.info(f"{selected_date} 无成交数据")
+        return
+
+    total_amt = float(vals.sum())
+    total_cnt = int(vals.size)
+
+    # 分位数（找活跃门槛用）
+    pcts = {p: float(np.percentile(vals, p)) for p in (50, 80, 90, 95, 99)}
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("全市场成交额", f"{total_amt/1e4:.2f} 万亿" if total_amt >= 1e4 else f"{total_amt:.0f} 亿")
+    m2.metric("有成交个股", f"{total_cnt}")
+    m3.metric("中位数 P50", f"{pcts[50]:.2f} 亿")
+    m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
+
+    tab1, tab2, tab3 = st.tabs(["对数分布（找门槛）", "固定档位", "进退榜（需先刷新）"])
+
+    # ── 对数刻度直方图 + 分位数竖线 ────────────────────────────────────
+    with tab1:
+        st.caption("成交额取对数后作直方图：长尾被拉直，主峰/肩部/波谷即天然分界；"
+                   "竖线为分位数门槛（每日自适应总量能）。")
+        logv = np.log10(vals)
+        nbins = 40
+        lo, hi = logv.min(), logv.max()
+        edges = np.linspace(lo, hi, nbins + 1)
+        counts, _ = np.histogram(logv, bins=edges)
+        centers = (edges[:-1] + edges[1:]) / 2
+        # 每个柱对应的亿区间（用于 hover）
+        lows = 10 ** edges[:-1]
+        highs = 10 ** edges[1:]
+        hover = [f"{lo_:.2f}–{hi_:.2f} 亿<br>%d 只" % c
+                 for lo_, hi_, c in zip(lows, highs, counts)]
+
+        accent = "#3B82F6"
+        fig = go.Figure(go.Bar(
+            x=centers, y=counts, marker_color=accent, marker_line_width=0,
+            width=(edges[1] - edges[0]) * 0.95,
+            hovertext=hover, hovertemplate="%{hovertext}<extra></extra>",
+        ))
+        # 分位数竖线（顶部标注）
+        pct_colors = {50: "#94A3B8", 80: "#F59E0B", 90: "#EF4444", 95: "#B91C1C", 99: "#7F1D1D"}
+        for p, v in pcts.items():
+            x = np.log10(v)
+            fig.add_vline(x=x, line_width=1.5, line_dash="dash",
+                          line_color=pct_colors[p])
+            fig.add_annotation(x=x, yref="paper", y=1.0,
+                               text=f"P{p}<br>{v:.1f}亿", showarrow=False,
+                               font=dict(size=10, color=pct_colors[p]),
+                               yanchor="bottom")
+
+        # μ+1σ / μ+2σ（对数空间）——实线，底部标注
+        mu_log, sd_log = float(logv.mean()), float(logv.std())
+        sigma_lines = {
+            "μ+1σ": (mu_log + sd_log, "#10B981"),
+            "μ+2σ": (mu_log + 2 * sd_log, "#059669"),
+        }
+        for label, (xlog, color) in sigma_lines.items():
+            v_yi = 10 ** xlog
+            fig.add_vline(x=xlog, line_width=1.5, line_color=color)
+            fig.add_annotation(x=xlog, yref="paper", y=0.0,
+                               text=f"{label}<br>{v_yi:.1f}亿", showarrow=False,
+                               font=dict(size=10, color=color), yanchor="top")
+
+        # Pareto 50%：成交额从大到小累加，前若干只占全市场 50% 的门槛
+        desc = np.sort(vals)[::-1]
+        cum = np.cumsum(desc)
+        k = int(np.searchsorted(cum, total_amt * 0.5) + 1)
+        pareto_v = float(desc[min(k, len(desc)) - 1])
+        px = np.log10(pareto_v)
+        fig.add_vline(x=px, line_width=2, line_dash="dot", line_color="#8B5CF6")
+        fig.add_annotation(x=px, yref="paper", y=0.5,
+                           text=f"Pareto50%<br>{pareto_v:.1f}亿<br>(前{k}只)",
+                           showarrow=False, font=dict(size=10, color="#8B5CF6"),
+                           bgcolor="rgba(255,255,255,0.6)")
+
+        # 右侧拐点（肘部）：主峰到最右端下降段，离弦最远处 = 陡降转平缓
+        knee_v = None
+        sm = np.convolve(counts.astype(float), np.ones(3) / 3, mode="same")  # 3点平滑去噪
+        peak = int(np.argmax(sm))
+        right_x = centers[peak:]
+        right_y = sm[peak:]
+        if len(right_x) >= 3 and right_y[0] > right_y[-1]:
+            # 归一化后连弦，求各点到弦的垂距，取最大
+            xn = (right_x - right_x[0]) / (right_x[-1] - right_x[0] + 1e-12)
+            yn = (right_y - right_y.min()) / (right_y.max() - right_y.min() + 1e-12)
+            # 弦：从 (0, yn[0]) 到 (1, yn[-1])
+            chord = yn[0] + (yn[-1] - yn[0]) * xn
+            dist = chord - yn  # 凸向下的下降曲线在肘部离弦最远
+            ki = int(np.argmax(dist))
+            if 0 < ki < len(right_x) - 1:
+                kx = float(right_x[ki])
+                knee_v = 10 ** kx
+                fig.add_vline(x=kx, line_width=2, line_color="#F97316")
+                fig.add_annotation(x=kx, yref="paper", y=0.85,
+                                   text=f"拐点<br>{knee_v:.1f}亿", showarrow=False,
+                                   font=dict(size=10, color="#F97316"),
+                                   bgcolor="rgba(255,255,255,0.6)")
+        # x 轴用亿刻度
+        ticks_yi = [0.1, 0.3, 1, 3, 10, 30, 100, 300]
+        ticks_yi = [t for t in ticks_yi if lo <= np.log10(t) <= hi]
+        fig.update_xaxes(
+            tickvals=[np.log10(t) for t in ticks_yi],
+            ticktext=[f"{t:g}亿" for t in ticks_yi],
+            title="成交额（对数刻度）",
+        )
+        fig.update_yaxes(title="个股数", gridcolor="rgba(128,128,128,0.2)")
+        fig.update_layout(
+            height=440, margin=dict(l=10, r=10, t=40, b=10),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption(
+            f"分位门槛：P50={pcts[50]:.2f}亿 · P80={pcts[80]:.2f}亿 · "
+            f"P90={pcts[90]:.2f}亿 · P95={pcts[95]:.2f}亿 · P99={pcts[99]:.2f}亿"
+        )
+        st.caption(
+            f"μ+1σ={10**(mu_log+sd_log):.2f}亿 · μ+2σ={10**(mu_log+2*sd_log):.2f}亿 "
+            f"（对数空间，随分化 σ 自适应）｜ Pareto50%={pareto_v:.2f}亿"
+            f"（前 {k} 只占全市场成交额一半）"
+            + (f"｜ 拐点(肘部)≈{knee_v:.2f}亿（主体与长尾的边界）" if knee_v else "")
+        )
+
+        # ── 门槛以上个股清单 ──────────────────────────────────────────
+        st.divider()
+        knee_label = f"🔴 焦点龙头区（≥拐点 {knee_v:.2f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
+        lt1, lt2 = st.tabs([
+            f"🟠 资金主力区（≥Pareto50% {pareto_v:.2f}亿）",
+            knee_label,
+        ])
+        with lt1:
+            dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
+            st.caption(f"共 {len(dfp)} 只，合计成交额约占全市场一半")
+            st.dataframe(dfp, use_container_width=True, hide_index=True)
+        with lt2:
+            if knee_v:
+                dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
+                st.caption(f"共 {len(dfk)} 只，长尾起点以上的焦点股")
+                st.dataframe(dfk, use_container_width=True, hide_index=True)
+            else:
+                st.info("当天未检出有效拐点")
+
+    # ── 固定档位柱状图（参考）──────────────────────────────────────────
+    with tab2:
+        df = load_turnover_dist(con_id, db_path, selected_date)
+        metric = st.radio("统计口径", ["家数", "成交额亿"], horizontal=True, key="tv_metric")
+        txt = df[metric].map(lambda v: f"{v:.0f}")
+        fig2 = go.Figure(go.Bar(
+            x=df["区间"], y=df[metric], text=txt, textposition="outside",
+            marker_color="#3B82F6", marker_line_width=0,
+            hovertemplate="%{x}<br>%{y}<extra></extra>",
+        ))
+        fig2.update_layout(
+            height=420, margin=dict(l=10, r=10, t=30, b=10),
+            yaxis_title=metric, xaxis_title="成交额区间",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
+        fig2.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
+        st.plotly_chart(fig2, use_container_width=True)
+        with st.expander("明细表"):
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ── 进退榜（读 active_pool_daily，需先跑 run_daily 刷新）──────────────
+    with tab3:
+        st.caption("跨日追踪：连续在榜天数、新进榜、退榜。数据来自 active_pool_daily，"
+                   "需先在 ⚙️ 数据管理 执行刷新（run_daily）。门槛每日自适应。")
+        zone_label = st.radio("分区", ["资金主力区(Pareto50%)", "焦点龙头区(拐点)"],
+                              horizontal=True, key="tv_zone")
+        zone = "pareto" if zone_label.startswith("资金") else "knee"
+
+        pool = load_active_pool(con_id, db_path, selected_date, zone)
+        exits = load_active_exits(con_id, db_path, selected_date, zone)
+        if pool.empty and exits.empty:
+            st.info("该日无数据（未刷新或当天该分区为空）")
+        else:
+            new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
+            pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
+            st.markdown(f"**在榜 {len(pool)} 只**（其中新进榜 {len(new_in)} 只）")
+            st.dataframe(pool_show, use_container_width=True, hide_index=True)
+
+            e1, e2 = st.columns(2)
+            with e1:
+                st.markdown(f"**🆕 今日新进榜（{len(new_in)}）**")
+                if new_in.empty:
+                    st.caption("无")
+                else:
+                    st.dataframe(new_in.drop(columns=["新进榜"]),
+                                 use_container_width=True, hide_index=True)
+            with e2:
+                st.markdown(f"**🚪 今日退榜（{len(exits)}）**")
+                if exits.empty:
+                    st.caption("无")
+                else:
+                    st.dataframe(exits, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# 数据管理：tdx2db 初始化/更新 + 本项目数据初始化/刷新
+# ---------------------------------------------------------------------------
+
+def _run_command(cmd: list[str], cwd: str | None = None) -> bool:
+    """运行命令并把输出实时打到 UI。返回是否成功。"""
+    import subprocess
+
+    st.code(" ".join(cmd), language="bash")
+    placeholder = st.empty()
+    lines: list[str] = []
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+    except FileNotFoundError as e:
+        st.error(f"无法启动: {e}")
+        return False
+
+    for line in proc.stdout:  # type: ignore[union-attr]
+        lines.append(line.rstrip("\n"))
+        placeholder.code("\n".join(lines[-200:]))
+    proc.wait()
+    if proc.returncode == 0:
+        st.success(f"完成 (exit {proc.returncode})")
+        return True
+    st.error(f"失败 (exit {proc.returncode})")
+    return False
+
+
+def _release_db_connections(db_path: str | None = None) -> None:
+    """释放 streamlit 持有的只读连接，避免 DuckDB 写锁冲突。
+
+    仅 clear() 不够——缓存对象仍持有文件锁，必须显式 close() 后再清缓存，
+    并触发 GC 让 DuckDB 真正释放 OS 层文件锁。
+    """
+    import gc
+    try:
+        if db_path:
+            try:
+                con = get_con(db_path)  # 取回缓存的连接对象
+                con.close()
+            except Exception:
+                pass
+        get_con.clear()
+        gc.collect()
+    except Exception:
+        pass
+
+
+def _list_drives() -> list[str]:
+    """Windows 列出盘符；其它平台返回根。"""
+    import os
+    import string
+    if os.name == "nt":
+        return [f"{d}:\\" for d in string.ascii_uppercase
+                if os.path.exists(f"{d}:\\")]
+    return ["/"]
+
+
+def _dir_browser(state_key: str, on_select) -> None:
+    """纯 Python 目录浏览器（不依赖 tkinter）。
+
+    state_key: session_state 里保存"当前浏览目录"的键
+    on_select: 选定目录时的回调，参数为绝对路径
+    """
+    import os
+
+    cur = st.session_state.get(state_key) or (_list_drives()[0])
+    cur = os.path.abspath(cur)
+    st.text_input("当前目录", value=cur, key=f"{state_key}_show", disabled=True)
+
+    # 顶部：上级 + 选定
+    cols = st.columns(2)
+    if cols[0].button("⬆️ 上级", use_container_width=True, key=f"{state_key}_up"):
+        parent = os.path.dirname(cur.rstrip("\\/")) or cur
+        st.session_state[state_key] = parent
+        st.rerun()
+    if cols[1].button("✅ 选定此目录", type="primary", use_container_width=True,
+                      key=f"{state_key}_sel"):
+        on_select(cur)
+        return
+    # 盘符快捷切换（Windows 多盘）
+    drives = _list_drives()
+    if len(drives) > 1:
+        dcols = st.columns(len(drives))
+        for i, d in enumerate(drives):
+            if dcols[i].button(d, use_container_width=True, key=f"{state_key}_drv_{d}"):
+                st.session_state[state_key] = d
+                st.rerun()
+
+    # 子目录列表
+    try:
+        subs = sorted(
+            [e for e in os.listdir(cur)
+             if os.path.isdir(os.path.join(cur, e)) and not e.startswith(".")],
+            key=str.lower,
+        )
+    except Exception as e:
+        st.error(f"无法读取目录：{e}")
+        subs = []
+
+    if not subs:
+        st.caption("（无子目录）")
+    for name in subs[:300]:
+        if st.button(f"📁 {name}", use_container_width=True,
+                     key=f"{state_key}_d_{name}"):
+            st.session_state[state_key] = os.path.join(cur, name)
+            st.rerun()
+
+
+def render_data_mgmt(db_path: str) -> None:
+    import os
+
+    repo_root = str(Path(__file__).parent.parent)  # ui/ 的上一级即仓库根
+
+    # DB 固定放 data 子目录，不在 UI 配置
+    data_dir = os.path.join(repo_root, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    cur_db = db_path or os.path.join(data_dir, "tdx.db")
+
+    # vipdoc 目录记忆：持久化到 data/dm_config.json
+    cfg_path = os.path.join(data_dir, "dm_config.json")
+
+    def _load_vipdoc() -> str:
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                return json.load(f).get("vipdoc", "")
+        except Exception:
+            return ""
+
+    def _save_vipdoc(path: str) -> None:
+        try:
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"vipdoc": path}, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    # 首次进入时把磁盘里记忆的值灌入 session_state
+    if "dm_vipdoc" not in st.session_state:
+        st.session_state["dm_vipdoc"] = _load_vipdoc()
+    # 目录浏览器选定的值（widget 实例化前写入才合法）
+    if "dm_vipdoc_pending" in st.session_state:
+        st.session_state["dm_vipdoc"] = st.session_state.pop("dm_vipdoc_pending")
+    tdx_exe = os.path.join(repo_root, "tdx2db.exe")
+    # tdx2db 的 --dburi 只接受正斜杠路径
+    dburi = f"duckdb://{cur_db.replace(chr(92), '/')}"
+
+    if not os.path.exists(cur_db):
+        st.info(
+            "👋 检测到数据库尚未初始化。首次使用请按顺序操作：\n\n"
+            "1️⃣ 选择通达信 vipdoc 目录 → 点「tdx2db 初始化」\n\n"
+            "2️⃣ 完成后点「本项目初始化历史」\n\n"
+            "之后日常只需依次点两个「日常更新 / 刷新」即可。"
+        )
+
+    st.caption(f"数据库：`{cur_db}`")
+    st.caption("运行前会释放本应用对数据库的连接，避免与 tdx2db 写入冲突。")
+
+    py = sys.executable
+    running = bool(st.session_state.get("dm_running"))
+
+    st.divider()
+    st.markdown("#### 1. tdx2db 行情数据")
+
+    # ── vipdoc 目录选择 ───────────────────────────────────────────────
+    pc1, pc2 = st.columns([1, 3])
+    if pc1.button("📂 浏览选择目录", use_container_width=True, key="dm_pick", disabled=running):
+        # 初始化浏览起点为当前已填路径
+        st.session_state["dm_browse"] = st.session_state.get("dm_vipdoc") or ""
+        st.session_state["dm_browse_open"] = True
+        st.rerun()
+    vipdoc = pc2.text_input("通达信 vipdoc 目录（初始化用）",
+                            placeholder=r"C:\new_tdx\vipdoc", key="dm_vipdoc",
+                            disabled=running)
+    # 手动编辑后也记忆
+    if vipdoc and vipdoc != _load_vipdoc():
+        _save_vipdoc(vipdoc)
+
+    # 目录浏览器（纯 Python，不依赖 tkinter）
+    if st.session_state.get("dm_browse_open") and not running:
+        with st.container(border=True):
+            st.caption("浏览并选定 vipdoc 目录")
+
+            def _on_select(path: str) -> None:
+                # 不能直接改已实例化的 widget state，用 pending 键，下个 run 再写入
+                st.session_state["dm_vipdoc_pending"] = path
+                _save_vipdoc(path)
+                st.session_state["dm_browse_open"] = False
+                st.rerun()
+
+            _dir_browser("dm_browse", _on_select)
+            if st.button("关闭浏览器", key="dm_browse_close"):
+                st.session_state["dm_browse_open"] = False
+                st.rerun()
+
+    if st.button("🆕 初始化行情（首次全量，删除重建）", use_container_width=True,
+                 key="dm_tdx_init", disabled=running):
+        if not vipdoc:
+            st.warning("请先选择 vipdoc 目录")
+        else:
+            st.session_state["dm_confirm_init"] = True
+
+    # 内联二次确认
+    if st.session_state.get("dm_confirm_init") and not running:
+        st.warning(f"⚠️ 初始化会**删除并重建**数据库，现有数据全部丢失：\n\n`{cur_db}`")
+        cc1, cc2 = st.columns(2)
+        if cc1.button("✅ 确认初始化", type="primary", use_container_width=True, key="dm_init_ok"):
+            st.session_state.pop("dm_confirm_init", None)
+            st.session_state["dm_running"] = True
+            st.session_state["dm_task"] = "init"
+            st.rerun()
+        if cc2.button("取消", use_container_width=True, key="dm_init_cancel"):
+            st.session_state.pop("dm_confirm_init", None)
+            st.rerun()
+
+    st.divider()
+    st.markdown("#### 2. 本项目数据（RPS / 三线红 / 市场宽度）")
+    st.caption("下列操作会先用 tdx2db 增量更新行情，再重算本项目数据。")
+    d1, d2 = st.columns(2)
+    if d1.button("🆕 初始化历史", use_container_width=True, key="dm_rps_init", disabled=running):
+        st.session_state["dm_confirm_rps_init"] = True
+    if d2.button("🔄 日常刷新", use_container_width=True, key="dm_rps_daily", disabled=running):
+        st.session_state["dm_running"] = True
+        st.session_state["dm_task"] = "rps_daily"
+        st.rerun()
+
+    # 初始化历史内联二次确认
+    if st.session_state.get("dm_confirm_rps_init") and not running:
+        st.warning("⚠️ 初始化历史会**重算并覆盖**本项目所有数据（RPS / 三线红 / 市场宽度），耗时较长。")
+        rc1, rc2 = st.columns(2)
+        if rc1.button("✅ 确认初始化历史", type="primary", use_container_width=True, key="dm_rps_init_ok"):
+            st.session_state.pop("dm_confirm_rps_init", None)
+            st.session_state["dm_running"] = True
+            st.session_state["dm_task"] = "rps_init"
+            st.rerun()
+        if rc2.button("取消", use_container_width=True, key="dm_rps_init_cancel"):
+            st.session_state.pop("dm_confirm_rps_init", None)
+            st.rerun()
+
+    # ── 任务执行（按钮已禁用状态下运行）────────────────────────────────
+    task = st.session_state.get("dm_task")
+    if running and task:
+        st.info(f"⏳ 正在执行：{task}，请勿关闭页面…")
+        # 先插一次渲染让弹窗关闭、按钮置灰，再跑阻塞命令
+        if not st.session_state.get("dm_started"):
+            st.session_state["dm_started"] = True
+            st.rerun()
+        try:
+            _release_db_connections(cur_db)
+            if task == "init":
+                try:
+                    if os.path.exists(cur_db):
+                        os.remove(cur_db)
+                        st.info(f"已删除旧数据库 {cur_db}")
+                    removed = True
+                except Exception as e:
+                    st.error(f"删除旧数据库失败（可能仍被占用）：{e}")
+                    removed = False
+                if removed:
+                    _run_command([tdx_exe, "init", "--dburi", dburi, "--dayfiledir", vipdoc])
+            elif task in ("rps_init", "rps_daily"):
+                # 先增量更新行情，成功后再重算本项目数据
+                st.markdown("**① tdx2db 增量更新行情**")
+                if _run_command([tdx_exe, "cron", "--dburi", dburi]):
+                    st.markdown("**② 重算本项目数据**")
+                    if task == "rps_init":
+                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
+                                     cwd=repo_root)
+                    else:
+                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+                else:
+                    st.error("行情更新失败，已中止本项目数据计算。")
+        finally:
+            st.session_state["dm_running"] = False
+            st.session_state.pop("dm_task", None)
+            st.session_state.pop("dm_started", None)
+        # 不自动 rerun，保留命令输出；用按钮恢复界面（解禁其它按钮）
+        st.button("✅ 完成，返回", type="primary", key="dm_done")
+
+
+# ---------------------------------------------------------------------------
+# Main UI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    import os
+
+    db_path = _db_path_from_args()
+    if not db_path:
+        # 默认数据库：仓库 data/tdx.db，无需用户选择
+        repo_root = str(Path(__file__).parent.parent)
+        os.makedirs(os.path.join(repo_root, "data"), exist_ok=True)
+        db_path = os.path.join(repo_root, "data", "tdx.db")
+
+    with st.sidebar:
+        st.header("数据源")
+        if os.path.exists(db_path):
+            st.success(f"已连接: `{db_path}`")
+        else:
+            st.warning(f"数据库未初始化\n\n`{db_path}`\n\n请到 ⚙️ 数据管理 初始化")
+
+    # 数据库可能尚未初始化（首次使用），连接失败时仍允许进入数据管理模块
+    con_id: int | None = None
+    con_err: str | None = None
+    try:
+        con = get_con(db_path)
+        con_id = id(con)
+    except Exception as e:
+        con_err = str(e)
+
+    _MODULES = {
+        "sanxianhong": ("📈", "三线红榜单"),
+        "screen":      ("🔍", "自选筛选"),
+        "breadth":     ("🌡️", "市场宽度"),
+        "turnover":    ("💰", "成交额分布"),
+        # "sentiment":   ("🔥", "情绪周期"),  # 暂时隐藏
+        "data_mgmt":   ("⚙️", "数据管理"),
+    }
+    db_exists = os.path.exists(db_path)
+    if "module" not in st.session_state:
+        # 首次启动若数据库尚未初始化，直接引导到数据管理
+        st.session_state.module = "sanxianhong" if db_exists else "data_mgmt"
+
+    with st.sidebar:
+        st.divider()
+        st.markdown("#### 模块导航")
+        for key, (icon, label) in _MODULES.items():
+            active = st.session_state.module == key
+            btn_style = (
+                "background:#1f77b4;color:#fff;border:none;border-radius:6px;"
+                "padding:8px 12px;width:100%;text-align:left;font-size:15px;cursor:pointer;margin-bottom:4px;"
+                if active else
+                "background:transparent;color:inherit;border:1px solid #ccc;border-radius:6px;"
+                "padding:8px 12px;width:100%;text-align:left;font-size:15px;cursor:pointer;margin-bottom:4px;"
             )
+            if st.button(f"{icon} {label}", key=f"nav_{key}",
+                         use_container_width=True,
+                         type="primary" if active else "secondary"):
+                st.session_state.module = key
+                st.rerun()
+
+    module = st.session_state.module
+    icon, label = _MODULES[module]
+    st.title(f"{icon} {label}")
+
+    if module == "data_mgmt":
+        render_data_mgmt(db_path)
+        return
+
+    if con_id is None:
+        st.error(f"无法连接数据库: {con_err}")
+        st.info("如果是首次使用，请先到 ⚙️ 数据管理 初始化数据。")
+        return
+
+    if module == "sanxianhong":
+        render_sanxianhong(con_id, db_path)
+    elif module == "screen":
+        render_screen(con_id, db_path)
+    elif module == "breadth":
+        render_breadth(con_id, db_path)
+    elif module == "turnover":
+        render_turnover(con_id, db_path)
+    elif module == "sentiment":
+        render_sentiment(con_id, db_path)
 
 
 if __name__ == "__main__":
