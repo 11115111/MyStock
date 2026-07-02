@@ -159,3 +159,26 @@ CREATE TABLE IF NOT EXISTS industry_member (
     symbol          VARCHAR PRIMARY KEY,
     industry_name   VARCHAR   -- 东财行业名称
 );
+
+-- 活跃度每日门槛（成交额分布，Python 从当日分布计算）
+CREATE TABLE IF NOT EXISTS active_threshold_daily (
+    trade_date  DATE PRIMARY KEY,
+    pareto_amt  DOUBLE,   -- Pareto50% 门槛（亿）：前若干只占全市场成交额一半
+    knee_amt    DOUBLE,   -- 右侧拐点门槛（亿）：主体与长尾的边界，可能为 NULL
+    total_amt   DOUBLE,   -- 全市场成交额（亿）
+    stock_count INTEGER   -- 有成交股票数
+);
+
+-- 活跃度每日在榜个股（zone: pareto=资金主力区 / knee=焦点龙头区）
+CREATE TABLE IF NOT EXISTS active_pool_daily (
+    trade_date       DATE NOT NULL,
+    symbol           VARCHAR NOT NULL,
+    zone             VARCHAR NOT NULL,   -- 'pareto' / 'knee'
+    name             VARCHAR,
+    amount_yi        DOUBLE,
+    rps50 DOUBLE, rps120 DOUBLE, rps250 DOUBLE,
+    change_pct DOUBLE, close_bfq DOUBLE, floatmv DOUBLE,
+    consecutive_days INTEGER,            -- 连续在榜天数
+    join_date        DATE,               -- 本轮进榜日
+    PRIMARY KEY (trade_date, symbol, zone)
+);

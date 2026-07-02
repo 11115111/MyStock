@@ -32,6 +32,7 @@ from core.rps_calculator import (
     calc_block_breadth_history,
 )
 from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
+from core.active_pool import calc_active, calc_active_history
 
 _DEFAULT_CFG = Path(__file__).parent.parent / "config" / "thresholds.yaml"
 
@@ -73,7 +74,7 @@ def main(
     con = get_connection(db)
 
     if drop_tables:
-        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "block_breadth_daily", "sanxianhong_daily"):
+        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "block_breadth_daily", "sanxianhong_daily", "active_threshold_daily", "active_pool_daily"):
             con.execute(f"DROP TABLE IF EXISTS {tbl}")
             click.echo(f"[drop] {tbl}")
 
@@ -118,6 +119,10 @@ def main(
             click.echo(f"[三线红] history {start_date} → {end_date} versions={versions}")
             n = calc_sanxianhong_history(con, start_date, end_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
+
+        click.echo(f"[活跃度门槛/在榜] history {start_date} → {end_date}")
+        n = calc_active_history(con, start_date, end_date)
+        click.echo(f"  {n} rows into active_pool_daily")
     else:
         if not target_date:
             row = con.execute("SELECT MAX(date) FROM raw_kline_daily").fetchone()
@@ -150,6 +155,10 @@ def main(
             click.echo(f"[三线红] {target_date} versions={versions}")
             n = calc_sanxianhong(con, target_date, szh_cfg, versions=versions)
             click.echo(f"  {n} rows")
+
+        click.echo(f"[活跃度门槛/在榜] {target_date}")
+        n = calc_active(con, target_date)
+        click.echo(f"  {n} rows into active_pool_daily")
 
     con.close()
     click.echo("done.")
