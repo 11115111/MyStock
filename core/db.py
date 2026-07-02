@@ -5,7 +5,18 @@ _SQL_CREATE = (Path(__file__).parent.parent / "sql" / "01_create_tables.sql").re
 
 
 def get_connection(db_path: str) -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(db_path)
+    con = duckdb.connect(db_path)
+    # 大计算调优：多线程 + 内存上限 + 磁盘临时目录（内存不足时溢写而非崩溃）
+    try:
+        import os
+        threads = max(1, (os.cpu_count() or 4))
+        con.execute(f"PRAGMA threads={threads}")
+        con.execute("PRAGMA memory_limit='4GB'")
+        tmp = os.path.join(os.path.dirname(os.path.abspath(db_path)) or ".", ".duckdb_tmp")
+        con.execute(f"PRAGMA temp_directory='{tmp}'")
+    except Exception:
+        pass
+    return con
 
 
 def init_tables(con: duckdb.DuckDBPyConnection) -> None:
