@@ -1027,7 +1027,7 @@ _AMT_BUCKETS = [
 def load_turnover_dates(_con_id: int, db_path: str) -> list[str]:
     con = get_con(db_path)
     rows = con.execute(
-        "SELECT DISTINCT date FROM raw_basic_daily ORDER BY date DESC LIMIT 120"
+        "SELECT DISTINCT date FROM raw_kline_daily ORDER BY date DESC LIMIT 120"
     ).fetchall()
     return [str(r[0]) for r in rows]
 
@@ -1044,7 +1044,7 @@ def load_turnover_dist(_con_id: int, db_path: str, trade_date: str) -> pd.DataFr
     sql = f"""
         WITH base AS (
             SELECT amount / 1e8 AS amt_yi
-            FROM raw_basic_daily
+            FROM raw_kline_daily
             WHERE date = $1 AND amount > 0
         )
         SELECT {case_bucket} AS bucket_idx,
