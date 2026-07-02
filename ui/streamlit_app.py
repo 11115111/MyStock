@@ -1189,6 +1189,29 @@ def render_turnover(con_id: int, db_path: str) -> None:
                            text=f"Pareto50%<br>{pareto_v:.1f}亿<br>(前{k}只)",
                            showarrow=False, font=dict(size=10, color="#8B5CF6"),
                            bgcolor="rgba(255,255,255,0.6)")
+
+        # 右侧拐点（肘部）：主峰到最右端下降段，离弦最远处 = 陡降转平缓
+        knee_v = None
+        sm = np.convolve(counts.astype(float), np.ones(3) / 3, mode="same")  # 3点平滑去噪
+        peak = int(np.argmax(sm))
+        right_x = centers[peak:]
+        right_y = sm[peak:]
+        if len(right_x) >= 3 and right_y[0] > right_y[-1]:
+            # 归一化后连弦，求各点到弦的垂距，取最大
+            xn = (right_x - right_x[0]) / (right_x[-1] - right_x[0] + 1e-12)
+            yn = (right_y - right_y.min()) / (right_y.max() - right_y.min() + 1e-12)
+            # 弦：从 (0, yn[0]) 到 (1, yn[-1])
+            chord = yn[0] + (yn[-1] - yn[0]) * xn
+            dist = chord - yn  # 凸向下的下降曲线在肘部离弦最远
+            ki = int(np.argmax(dist))
+            if 0 < ki < len(right_x) - 1:
+                kx = float(right_x[ki])
+                knee_v = 10 ** kx
+                fig.add_vline(x=kx, line_width=2, line_color="#F97316")
+                fig.add_annotation(x=kx, yref="paper", y=0.85,
+                                   text=f"拐点<br>{knee_v:.1f}亿", showarrow=False,
+                                   font=dict(size=10, color="#F97316"),
+                                   bgcolor="rgba(255,255,255,0.6)")
         # x 轴用亿刻度
         ticks_yi = [0.1, 0.3, 1, 3, 10, 30, 100, 300]
         ticks_yi = [t for t in ticks_yi if lo <= np.log10(t) <= hi]
@@ -1212,6 +1235,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
             f"μ+1σ={10**(mu_log+sd_log):.2f}亿 · μ+2σ={10**(mu_log+2*sd_log):.2f}亿 "
             f"（对数空间，随分化 σ 自适应）｜ Pareto50%={pareto_v:.2f}亿"
             f"（前 {k} 只占全市场成交额一半）"
+            + (f"｜ 拐点(肘部)≈{knee_v:.2f}亿（主体与长尾的边界）" if knee_v else "")
         )
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
