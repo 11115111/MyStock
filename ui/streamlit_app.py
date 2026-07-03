@@ -1302,19 +1302,14 @@ def render_turnover(con_id: int, db_path: str) -> None:
             return
         new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 勾选「K线」列查看")
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）")
+        st.dataframe(pool_show, use_container_width=True, hide_index=True)
+        # 可搜索下拉选股看 K 线（敲代码/名称即可定位）
         sel_symbol = None
-        view = pool_show.copy()
-        view.insert(0, "K线", False)
-        edited = st.data_editor(
-            view, use_container_width=True, hide_index=True,
-            key=f"tv_edit_{zone}",
-            column_config={"K线": st.column_config.CheckboxColumn("K线", width="small")},
-            disabled=[c for c in view.columns if c != "K线"],
-        )
-        checked = edited.index[edited["K线"] == True].tolist()
-        if checked:
-            sel_symbol = str(pool_show.iloc[checked[-1]]["代码"])
+        opts = ["（选择个股看K线）"] + [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
+        pick = st.selectbox("查看 K 线", opts, key=f"tv_pick_{zone}")
+        if pick and not pick.startswith("（"):
+            sel_symbol = pick.split()[0]
         e1, e2 = st.columns(2)
         with e1:
             st.markdown(f"🆕 今日新进榜（{len(new_in)}）")
@@ -1330,34 +1325,22 @@ def render_turnover(con_id: int, db_path: str) -> None:
             else:
                 st.dataframe(exits, use_container_width=True, hide_index=True)
 
-        # ── 选股看多周期 K 线 ─────────────────────────────────────────
-        if not pool.empty:
+        # ── 选中个股的多周期 K 线 ─────────────────────────────────────
+        if sel_symbol:
             st.divider()
-            # 表格点选不可用时回退到下拉
-            if st.session_state.get(f"tv_tbl_fallback_{zone}") and sel_symbol is None:
-                opts = [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
-                pick = st.selectbox("查看 K 线", ["（选择个股）"] + opts, key=f"tv_kline_{zone}")
-                if pick and not pick.startswith("（"):
-                    sel_symbol = pick.split()[0]
-
-            if sel_symbol:
-                name = pool.loc[pool["代码"] == sel_symbol, "名称"]
-                title_name = name.iloc[0] if len(name) else ""
-                daily = load_kline(con_id, db_path, sel_symbol, selected_date, days=250)
-                if daily.empty:
-                    st.info("无 K 线数据")
-                else:
-                    kt = st.radio("周期", ["日", "周", "月"], horizontal=True,
-                                  key=f"tv_kperiod_{zone}")
-                    if kt == "日":
-                        kdf = daily
-                    elif kt == "周":
-                        kdf = _resample_ohlc(daily, "W-FRI")
-                    else:
-                        kdf = _resample_ohlc(daily, "ME")
-                    st.plotly_chart(
-                        _candlestick(kdf, f"{sel_symbol} {title_name} · {kt}K（前复权）"),
-                        use_container_width=True)
+            name = pool.loc[pool["代码"] == sel_symbol, "名称"]
+            title_name = name.iloc[0] if len(name) else ""
+            daily = load_kline(con_id, db_path, sel_symbol, selected_date, days=250)
+            if daily.empty:
+                st.info("无 K 线数据")
+            else:
+                kt = st.radio("周期", ["日", "周", "月"], horizontal=True,
+                              key=f"tv_kperiod_{zone}")
+                kdf = daily if kt == "日" else _resample_ohlc(
+                    daily, "W-FRI" if kt == "周" else "ME")
+                st.plotly_chart(
+                    _candlestick(kdf, f"{sel_symbol} {title_name} · {kt}K（前复权）"),
+                    use_container_width=True)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
