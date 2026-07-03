@@ -1074,6 +1074,22 @@ def load_active_stocks(_con_id: int, db_path: str, trade_date: str,
 
 
 @st.cache_data(ttl=60)
+def load_knee_trend(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
+    """最近 60 个交易日的拐点门槛走势（读 active_threshold_daily，需先刷新）。"""
+    con = get_con(db_path)
+    try:
+        df = con.execute("""
+            SELECT trade_date, knee_amt, pareto_amt
+            FROM active_threshold_daily
+            WHERE trade_date <= $1
+            ORDER BY trade_date DESC LIMIT 60
+        """, [trade_date]).df()
+        return df.iloc[::-1].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
 def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> pd.DataFrame:
     """某日某分区在榜个股（含连续天数），标注是否新进榜。"""
     con = get_con(db_path)
@@ -1204,15 +1220,15 @@ def render_turnover(con_id: int, db_path: str) -> None:
     # 分位数（找活跃门槛用）
     pcts = {p: float(np.percentile(vals, p)) for p in (50, 80, 90, 95, 99)}
 
+    # 门槛计算（各 tab 共用；与 active_pool 落库逻辑一致）
+    from core.active_pool import compute_thresholds, _HIST_BINS
+    pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("全市场成交额", f"{total_amt/1e4:.2f} 万亿" if total_amt >= 1e4 else f"{total_amt:.0f} 亿")
     m2.metric("有成交个股", f"{total_cnt}")
-    m3.metric("中位数 P50", f"{pcts[50]:.2f} 亿")
+    m3.metric("拐点", f"{knee_v:.2f} 亿" if knee_v else "—")
     m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
-
-    # 门槛计算（提到 tab 外，各清单 tab 共用；与 active_pool 落库逻辑一致）
-    from core.active_pool import compute_thresholds, _HIST_BINS
-    pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
 
     tab_p, tab_chart, tab_fix = st.tabs([
         f"🟠 资金主力区（≥{pareto_v:.1f}亿）",
@@ -1317,6 +1333,28 @@ def render_turnover(con_id: int, db_path: str) -> None:
             f"Pareto50%={pareto_v:.2f}亿"
             + (f" ｜ 拐点≈{knee_v:.2f}亿" if knee_v else "")
         )
+
+        # ── 近60日拐点走势 ────────────────────────────────────────────
+        st.divider()
+        st.markdown("**近 60 日拐点走势**")
+        trend = load_knee_trend(con_id, db_path, selected_date)
+        if trend.empty or trend["knee_amt"].notna().sum() == 0:
+            st.info("暂无历史门槛数据（需先在 ⚙️ 数据管理 执行刷新）")
+        else:
+            tfig = go.Figure(go.Scatter(
+                x=trend["trade_date"].astype(str), y=trend["knee_amt"],
+                mode="lines+markers", line=dict(color="#F97316", width=2),
+                marker=dict(size=5), connectgaps=False,
+                hovertemplate="%{x}<br>拐点 %{y:.2f}亿<extra></extra>",
+            ))
+            tfig.update_layout(
+                height=260, margin=dict(l=10, r=10, t=10, b=10),
+                yaxis_title="拐点（亿）", xaxis_title="",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            tfig.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
+            st.plotly_chart(tfig, use_container_width=True)
+            st.caption("断点表示当天未检出有效拐点（分布无明显肩部）。")
 
     # ── 资金主力区：在榜 + 进退榜 ─────────────────────────────────────
     with tab_p:
