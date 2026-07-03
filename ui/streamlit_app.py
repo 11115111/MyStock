@@ -1073,6 +1073,50 @@ def load_active_stocks(_con_id: int, db_path: str, trade_date: str,
     return con.execute(sql, [trade_date, min_amt_yi]).df()
 
 
+@st.cache_data(ttl=300)
+def load_kline(_con_id: int, db_path: str, symbol: str, end_date: str,
+               days: int = 250) -> pd.DataFrame:
+    """前复权日K（截止 end_date 往前 days 个交易日）。"""
+    con = get_con(db_path)
+    try:
+        return con.execute("""
+            SELECT date, open, high, low, close
+            FROM v_stock_qfq
+            WHERE symbol = $1 AND date <= $2
+            ORDER BY date DESC LIMIT $3
+        """, [symbol, end_date, days]).df().iloc[::-1].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """日K重采样到周/月。rule: 'W-FRI' / 'ME'。"""
+    if df.empty:
+        return df
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"])
+    d = d.set_index("date")
+    out = d.resample(rule).agg({"open": "first", "high": "max",
+                                "low": "min", "close": "last"}).dropna()
+    return out.reset_index()
+
+
+def _candlestick(df: pd.DataFrame, title: str):
+    import plotly.graph_objects as go
+    fig = go.Figure(go.Candlestick(
+        x=df["date"].astype(str), open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        increasing_line_color="#EF4444", decreasing_line_color="#10B981",
+    ))
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=30, b=10), title=title,
+        xaxis_rangeslider_visible=False,
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.2)")
+    return fig
+
+
 @st.cache_data(ttl=60)
 def load_knee_trend(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
     """最近 60 个交易日的拐点门槛走势（读 active_threshold_daily，需先刷新）。"""
@@ -1274,6 +1318,28 @@ def render_turnover(con_id: int, db_path: str) -> None:
                 st.caption("无")
             else:
                 st.dataframe(exits, use_container_width=True, hide_index=True)
+
+        # ── 选股看多周期 K 线 ─────────────────────────────────────────
+        if not pool.empty:
+            st.divider()
+            opts = [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
+            pick = st.selectbox("查看 K 线", ["（选择个股）"] + opts, key=f"tv_kline_{zone}")
+            if pick and not pick.startswith("（"):
+                sym = pick.split()[0]
+                daily = load_kline(con_id, db_path, sym, selected_date, days=250)
+                if daily.empty:
+                    st.info("无 K 线数据")
+                else:
+                    kt = st.radio("周期", ["日", "周", "月"], horizontal=True,
+                                  key=f"tv_kperiod_{zone}")
+                    if kt == "日":
+                        kdf = daily
+                    elif kt == "周":
+                        kdf = _resample_ohlc(daily, "W-FRI")
+                    else:
+                        kdf = _resample_ohlc(daily, "ME")
+                    st.plotly_chart(_candlestick(kdf, f"{pick} · {kt}K（前复权）"),
+                                    use_container_width=True)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
