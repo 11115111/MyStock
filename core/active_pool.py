@@ -100,12 +100,6 @@ mem AS (
     JOIN stock_pool sp ON sp.symbol = k.symbol
     JOIN active_threshold_daily t ON t.trade_date = k.date
     WHERE t.pareto_amt IS NOT NULL AND k.amount / 1e8 >= t.pareto_amt
-    UNION ALL
-    SELECT k.date, k.symbol, 'knee', k.amount / 1e8
-    FROM raw_kline_daily k
-    JOIN stock_pool sp ON sp.symbol = k.symbol
-    JOIN active_threshold_daily t ON t.trade_date = k.date
-    WHERE t.knee_amt IS NOT NULL AND k.amount / 1e8 >= t.knee_amt
 ),
 joined AS (
     SELECT m.*, td.idx FROM mem m JOIN td ON td.trade_date = m.trade_date
