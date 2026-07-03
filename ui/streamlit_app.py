@@ -1211,7 +1211,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
     m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
 
     # 门槛计算（提到 tab 外，各清单 tab 共用；与 active_pool 落库逻辑一致）
-    from core.active_pool import compute_thresholds
+    from core.active_pool import compute_thresholds, _HIST_BINS
     pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
 
     ktab = f"🔴 焦点龙头区（≥拐点{knee_v:.1f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
@@ -1256,7 +1256,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
         st.caption("成交额取对数后作直方图：长尾被拉直，主峰/肩部/波谷即天然分界；"
                    "竖线为各门槛（每日自适应总量能）。")
         logv = np.log10(vals)
-        nbins = 40
+        nbins = _HIST_BINS  # 与 active_pool 落库口径共用同一分箱数
         lo, hi = logv.min(), logv.max()
         edges = np.linspace(lo, hi, nbins + 1)
         counts, _ = np.histogram(logv, bins=edges)
