@@ -1202,13 +1202,35 @@ def render_turnover(con_id: int, db_path: str) -> None:
     pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
 
     ktab = f"🔴 焦点龙头区（≥拐点{knee_v:.1f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
-    tab_chart, tab_p, tab_k, tab_fix, tab_pool = st.tabs([
+    tab_chart, tab_p, tab_k, tab_fix = st.tabs([
         "对数分布（找门槛）",
         f"🟠 资金主力区（≥{pareto_v:.1f}亿）",
         ktab,
         "固定档位",
-        "进退榜（需先刷新）",
     ])
+
+    def _render_pool_section(zone: str) -> None:
+        """某分区的进退榜（读 active_pool_daily，需先 run_daily 刷新）。"""
+        st.markdown("**跨日进退榜**")
+        st.caption("连续在榜天数 / 新进榜 / 退榜。数据来自 active_pool_daily，"
+                   "需先在 ⚙️ 数据管理 执行刷新。")
+        pool = load_active_pool(con_id, db_path, selected_date, zone)
+        exits = load_active_exits(con_id, db_path, selected_date, zone)
+        if pool.empty and exits.empty:
+            st.info("该日无数据（未刷新或当天该分区为空）")
+            return
+        new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
+        pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）")
+        st.dataframe(pool_show, use_container_width=True, hide_index=True)
+        e1, e2 = st.columns(2)
+        with e1:
+            st.markdown(f"🆕 今日新进榜（{len(new_in)}）")
+            st.dataframe(new_in.drop(columns=["新进榜"]) if not new_in.empty else new_in,
+                         use_container_width=True, hide_index=True) if not new_in.empty else st.caption("无")
+        with e2:
+            st.markdown(f"🚪 今日退榜（{len(exits)}）")
+            st.dataframe(exits, use_container_width=True, hide_index=True) if not exits.empty else st.caption("无")
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
@@ -1279,20 +1301,24 @@ def render_turnover(con_id: int, db_path: str) -> None:
             + (f" ｜ 拐点≈{knee_v:.2f}亿" if knee_v else "")
         )
 
-    # ── 资金主力区清单 ────────────────────────────────────────────────
+    # ── 资金主力区：即时清单 + 进退榜 ─────────────────────────────────
     with tab_p:
         dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
-        st.caption(f"成交额 ≥ Pareto50% {pareto_v:.2f}亿，共 {len(dfp)} 只，合计约占全市场成交额一半")
+        st.markdown(f"**即时清单**（成交额 ≥ {pareto_v:.2f}亿，共 {len(dfp)} 只，约占全市场成交额一半）")
         st.dataframe(dfp, use_container_width=True, hide_index=True)
+        st.divider()
+        _render_pool_section("pareto")
 
-    # ── 焦点龙头区清单 ────────────────────────────────────────────────
+    # ── 焦点龙头区：即时清单 + 进退榜 ─────────────────────────────────
     with tab_k:
         if knee_v:
             dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
-            st.caption(f"成交额 ≥ 拐点 {knee_v:.2f}亿，共 {len(dfk)} 只，长尾起点以上的焦点股")
+            st.markdown(f"**即时清单**（成交额 ≥ 拐点 {knee_v:.2f}亿，共 {len(dfk)} 只）")
             st.dataframe(dfk, use_container_width=True, hide_index=True)
         else:
             st.info("当天未检出有效拐点")
+        st.divider()
+        _render_pool_section("knee")
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
     with tab_fix:
@@ -1313,39 +1339,6 @@ def render_turnover(con_id: int, db_path: str) -> None:
         st.plotly_chart(fig2, use_container_width=True)
         with st.expander("明细表"):
             st.dataframe(df, use_container_width=True, hide_index=True)
-
-    # ── 进退榜（读 active_pool_daily，需先跑 run_daily 刷新）──────────────
-    with tab_pool:
-        st.caption("跨日追踪：连续在榜天数、新进榜、退榜。数据来自 active_pool_daily，"
-                   "需先在 ⚙️ 数据管理 执行刷新（run_daily）。门槛每日自适应。")
-        zone_label = st.radio("分区", ["资金主力区(Pareto50%)", "焦点龙头区(拐点)"],
-                              horizontal=True, key="tv_zone")
-        zone = "pareto" if zone_label.startswith("资金") else "knee"
-
-        pool = load_active_pool(con_id, db_path, selected_date, zone)
-        exits = load_active_exits(con_id, db_path, selected_date, zone)
-        if pool.empty and exits.empty:
-            st.info("该日无数据（未刷新或当天该分区为空）")
-        else:
-            new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
-            pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-            st.markdown(f"**在榜 {len(pool)} 只**（其中新进榜 {len(new_in)} 只）")
-            st.dataframe(pool_show, use_container_width=True, hide_index=True)
-
-            e1, e2 = st.columns(2)
-            with e1:
-                st.markdown(f"**🆕 今日新进榜（{len(new_in)}）**")
-                if new_in.empty:
-                    st.caption("无")
-                else:
-                    st.dataframe(new_in.drop(columns=["新进榜"]),
-                                 use_container_width=True, hide_index=True)
-            with e2:
-                st.markdown(f"**🚪 今日退榜（{len(exits)}）**")
-                if exits.empty:
-                    st.caption("无")
-                else:
-                    st.dataframe(exits, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
