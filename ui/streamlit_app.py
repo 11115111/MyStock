@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # 仓库根，供 import core.*
 
 # ---------------------------------------------------------------------------
 # Config
