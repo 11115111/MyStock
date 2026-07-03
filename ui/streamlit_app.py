@@ -1196,19 +1196,29 @@ def render_turnover(con_id: int, db_path: str) -> None:
     m3.metric("中位数 P50", f"{pcts[50]:.2f} 亿")
     m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
 
-    tab1, tab2, tab3 = st.tabs(["对数分布（找门槛）", "固定档位", "进退榜（需先刷新）"])
+    # 门槛计算（提到 tab 外，各清单 tab 共用；与 active_pool 落库逻辑一致）
+    from core.active_pool import compute_thresholds
+    pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
 
-    # ── 对数刻度直方图 + 分位数竖线 ────────────────────────────────────
-    with tab1:
+    ktab = f"🔴 焦点龙头区（≥拐点{knee_v:.1f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
+    tab_chart, tab_p, tab_k, tab_fix, tab_pool = st.tabs([
+        "对数分布（找门槛）",
+        f"🟠 资金主力区（≥{pareto_v:.1f}亿）",
+        ktab,
+        "固定档位",
+        "进退榜（需先刷新）",
+    ])
+
+    # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
+    with tab_chart:
         st.caption("成交额取对数后作直方图：长尾被拉直，主峰/肩部/波谷即天然分界；"
-                   "竖线为分位数门槛（每日自适应总量能）。")
+                   "竖线为各门槛（每日自适应总量能）。")
         logv = np.log10(vals)
         nbins = 40
         lo, hi = logv.min(), logv.max()
         edges = np.linspace(lo, hi, nbins + 1)
         counts, _ = np.histogram(logv, bins=edges)
         centers = (edges[:-1] + edges[1:]) / 2
-        # 每个柱对应的亿区间（用于 hover）
         lows = 10 ** edges[:-1]
         highs = 10 ** edges[1:]
         hover = [f"{lo_:.2f}–{hi_:.2f} 亿<br>%d 只" % c
@@ -1224,107 +1234,67 @@ def render_turnover(con_id: int, db_path: str) -> None:
         pct_colors = {50: "#94A3B8", 80: "#F59E0B", 90: "#EF4444", 95: "#B91C1C", 99: "#7F1D1D"}
         for p, v in pcts.items():
             x = np.log10(v)
-            fig.add_vline(x=x, line_width=1.5, line_dash="dash",
-                          line_color=pct_colors[p])
+            fig.add_vline(x=x, line_width=1.5, line_dash="dash", line_color=pct_colors[p])
             fig.add_annotation(x=x, yref="paper", y=1.0,
                                text=f"P{p}<br>{v:.1f}亿", showarrow=False,
-                               font=dict(size=10, color=pct_colors[p]),
-                               yanchor="bottom")
+                               font=dict(size=10, color=pct_colors[p]), yanchor="bottom")
 
         # μ+1σ / μ+2σ（对数空间）——实线，底部标注
         mu_log, sd_log = float(logv.mean()), float(logv.std())
-        sigma_lines = {
-            "μ+1σ": (mu_log + sd_log, "#10B981"),
-            "μ+2σ": (mu_log + 2 * sd_log, "#059669"),
-        }
-        for label, (xlog, color) in sigma_lines.items():
-            v_yi = 10 ** xlog
+        for label, xlog, color in [("μ+1σ", mu_log + sd_log, "#10B981"),
+                                    ("μ+2σ", mu_log + 2 * sd_log, "#059669")]:
             fig.add_vline(x=xlog, line_width=1.5, line_color=color)
             fig.add_annotation(x=xlog, yref="paper", y=0.0,
-                               text=f"{label}<br>{v_yi:.1f}亿", showarrow=False,
+                               text=f"{label}<br>{10**xlog:.1f}亿", showarrow=False,
                                font=dict(size=10, color=color), yanchor="top")
 
-        # Pareto 50%：成交额从大到小累加，前若干只占全市场 50% 的门槛
-        desc = np.sort(vals)[::-1]
-        cum = np.cumsum(desc)
-        k = int(np.searchsorted(cum, total_amt * 0.5) + 1)
-        pareto_v = float(desc[min(k, len(desc)) - 1])
+        # Pareto50%（紫点线）
         px = np.log10(pareto_v)
         fig.add_vline(x=px, line_width=2, line_dash="dot", line_color="#8B5CF6")
-        fig.add_annotation(x=px, yref="paper", y=0.5,
-                           text=f"Pareto50%<br>{pareto_v:.1f}亿<br>(前{k}只)",
+        fig.add_annotation(x=px, yref="paper", y=0.5, text=f"Pareto50%<br>{pareto_v:.1f}亿",
                            showarrow=False, font=dict(size=10, color="#8B5CF6"),
                            bgcolor="rgba(255,255,255,0.6)")
+        # 拐点（橙实线）
+        if knee_v:
+            kx = np.log10(knee_v)
+            fig.add_vline(x=kx, line_width=2, line_color="#F97316")
+            fig.add_annotation(x=kx, yref="paper", y=0.85, text=f"拐点<br>{knee_v:.1f}亿",
+                               showarrow=False, font=dict(size=10, color="#F97316"),
+                               bgcolor="rgba(255,255,255,0.6)")
 
-        # 右侧拐点（肘部）：主峰到最右端下降段，离弦最远处 = 陡降转平缓
-        knee_v = None
-        sm = np.convolve(counts.astype(float), np.ones(3) / 3, mode="same")  # 3点平滑去噪
-        peak = int(np.argmax(sm))
-        right_x = centers[peak:]
-        right_y = sm[peak:]
-        if len(right_x) >= 3 and right_y[0] > right_y[-1]:
-            # 归一化后连弦，求各点到弦的垂距，取最大
-            xn = (right_x - right_x[0]) / (right_x[-1] - right_x[0] + 1e-12)
-            yn = (right_y - right_y.min()) / (right_y.max() - right_y.min() + 1e-12)
-            # 弦：从 (0, yn[0]) 到 (1, yn[-1])
-            chord = yn[0] + (yn[-1] - yn[0]) * xn
-            dist = chord - yn  # 凸向下的下降曲线在肘部离弦最远
-            ki = int(np.argmax(dist))
-            if 0 < ki < len(right_x) - 1:
-                kx = float(right_x[ki])
-                knee_v = 10 ** kx
-                fig.add_vline(x=kx, line_width=2, line_color="#F97316")
-                fig.add_annotation(x=kx, yref="paper", y=0.85,
-                                   text=f"拐点<br>{knee_v:.1f}亿", showarrow=False,
-                                   font=dict(size=10, color="#F97316"),
-                                   bgcolor="rgba(255,255,255,0.6)")
-        # x 轴用亿刻度
         ticks_yi = [0.1, 0.3, 1, 3, 10, 30, 100, 300]
         ticks_yi = [t for t in ticks_yi if lo <= np.log10(t) <= hi]
-        fig.update_xaxes(
-            tickvals=[np.log10(t) for t in ticks_yi],
-            ticktext=[f"{t:g}亿" for t in ticks_yi],
-            title="成交额（对数刻度）",
-        )
+        fig.update_xaxes(tickvals=[np.log10(t) for t in ticks_yi],
+                         ticktext=[f"{t:g}亿" for t in ticks_yi],
+                         title="成交额（对数刻度）")
         fig.update_yaxes(title="个股数", gridcolor="rgba(128,128,128,0.2)")
-        fig.update_layout(
-            height=440, margin=dict(l=10, r=10, t=40, b=10),
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        )
+        fig.update_layout(height=440, margin=dict(l=10, r=10, t=40, b=10),
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True)
-
         st.caption(
-            f"分位门槛：P50={pcts[50]:.2f}亿 · P80={pcts[80]:.2f}亿 · "
-            f"P90={pcts[90]:.2f}亿 · P95={pcts[95]:.2f}亿 · P99={pcts[99]:.2f}亿"
-        )
-        st.caption(
-            f"μ+1σ={10**(mu_log+sd_log):.2f}亿 · μ+2σ={10**(mu_log+2*sd_log):.2f}亿 "
-            f"（对数空间，随分化 σ 自适应）｜ Pareto50%={pareto_v:.2f}亿"
-            f"（前 {k} 只占全市场成交额一半）"
-            + (f"｜ 拐点(肘部)≈{knee_v:.2f}亿（主体与长尾的边界）" if knee_v else "")
+            f"P50={pcts[50]:.2f} · P90={pcts[90]:.2f} · P95={pcts[95]:.2f}亿 ｜ "
+            f"μ+1σ={10**(mu_log+sd_log):.2f} · μ+2σ={10**(mu_log+2*sd_log):.2f}亿 ｜ "
+            f"Pareto50%={pareto_v:.2f}亿"
+            + (f" ｜ 拐点≈{knee_v:.2f}亿" if knee_v else "")
         )
 
-        # ── 门槛以上个股清单 ──────────────────────────────────────────
-        st.divider()
-        knee_label = f"🔴 焦点龙头区（≥拐点 {knee_v:.2f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
-        lt1, lt2 = st.tabs([
-            f"🟠 资金主力区（≥Pareto50% {pareto_v:.2f}亿）",
-            knee_label,
-        ])
-        with lt1:
-            dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
-            st.caption(f"共 {len(dfp)} 只，合计成交额约占全市场一半")
-            st.dataframe(dfp, use_container_width=True, hide_index=True)
-        with lt2:
-            if knee_v:
-                dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
-                st.caption(f"共 {len(dfk)} 只，长尾起点以上的焦点股")
-                st.dataframe(dfk, use_container_width=True, hide_index=True)
-            else:
-                st.info("当天未检出有效拐点")
+    # ── 资金主力区清单 ────────────────────────────────────────────────
+    with tab_p:
+        dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
+        st.caption(f"成交额 ≥ Pareto50% {pareto_v:.2f}亿，共 {len(dfp)} 只，合计约占全市场成交额一半")
+        st.dataframe(dfp, use_container_width=True, hide_index=True)
+
+    # ── 焦点龙头区清单 ────────────────────────────────────────────────
+    with tab_k:
+        if knee_v:
+            dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
+            st.caption(f"成交额 ≥ 拐点 {knee_v:.2f}亿，共 {len(dfk)} 只，长尾起点以上的焦点股")
+            st.dataframe(dfk, use_container_width=True, hide_index=True)
+        else:
+            st.info("当天未检出有效拐点")
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
-    with tab2:
+    with tab_fix:
         df = load_turnover_dist(con_id, db_path, selected_date)
         metric = st.radio("统计口径", ["家数", "成交额亿"], horizontal=True, key="tv_metric")
         txt = df[metric].map(lambda v: f"{v:.0f}")
@@ -1344,7 +1314,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     # ── 进退榜（读 active_pool_daily，需先跑 run_daily 刷新）──────────────
-    with tab3:
+    with tab_pool:
         st.caption("跨日追踪：连续在榜天数、新进榜、退榜。数据来自 active_pool_daily，"
                    "需先在 ⚙️ 数据管理 执行刷新（run_daily）。门槛每日自适应。")
         zone_label = st.radio("分区", ["资金主力区(Pareto50%)", "焦点龙头区(拐点)"],
