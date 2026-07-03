@@ -1302,13 +1302,24 @@ def render_turnover(con_id: int, db_path: str) -> None:
             return
         new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）")
-        st.dataframe(pool_show, use_container_width=True, hide_index=True)
-        # 可搜索下拉选股看 K 线（敲代码/名称即可定位）
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 点击行查看 K 线")
         sel_symbol = None
-        opts = ["（选择个股看K线）"] + [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
+        # 不用 hide_index（部分版本 hide_index 会使行点选失效）
+        ev = st.dataframe(pool_show, use_container_width=True,
+                          on_select="rerun", selection_mode="single-row",
+                          key=f"tv_tbl_{zone}")
+        try:
+            rows = ev.selection.rows
+        except Exception:
+            rows = (st.session_state.get(f"tv_tbl_{zone}", {})
+                    .get("selection", {}).get("rows", []))
+        if rows:
+            sel_symbol = str(pool_show.iloc[rows[0]]["代码"])
+
+        # 双保险：可搜索下拉
+        opts = ["（或下拉选股）"] + [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
         pick = st.selectbox("查看 K 线", opts, key=f"tv_pick_{zone}")
-        if pick and not pick.startswith("（"):
+        if sel_symbol is None and pick and not pick.startswith("（"):
             sel_symbol = pick.split()[0]
         e1, e2 = st.columns(2)
         with e1:
