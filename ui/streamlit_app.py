@@ -1117,6 +1117,18 @@ def _candlestick(df: pd.DataFrame, title: str):
     return fig
 
 
+@st.dialog("K 线", width="large")
+def _kline_dialog(con_id: int, db_path: str, symbol: str, name: str, end_date: str):
+    daily = load_kline(con_id, db_path, symbol, end_date, days=250)
+    if daily.empty:
+        st.info("无 K 线数据")
+        return
+    kt = st.radio("周期", ["日", "周", "月"], horizontal=True, key="tv_dlg_period")
+    kdf = daily if kt == "日" else _resample_ohlc(daily, "W-FRI" if kt == "周" else "ME")
+    st.plotly_chart(_candlestick(kdf, f"{symbol} {name} · {kt}K（前复权）"),
+                    use_container_width=True)
+
+
 @st.cache_data(ttl=60)
 def load_knee_trend(_con_id: int, db_path: str, trade_date: str) -> pd.DataFrame:
     """最近 60 个交易日的拐点门槛走势（读 active_threshold_daily，需先刷新）。"""
@@ -1336,22 +1348,13 @@ def render_turnover(con_id: int, db_path: str) -> None:
             else:
                 st.dataframe(exits, use_container_width=True, hide_index=True)
 
-        # ── 选中个股的多周期 K 线 ─────────────────────────────────────
+        # ── 选中个股 → 弹窗看多周期 K 线 ──────────────────────────────
         if sel_symbol:
-            st.divider()
             name = pool.loc[pool["代码"] == sel_symbol, "名称"]
             title_name = name.iloc[0] if len(name) else ""
-            daily = load_kline(con_id, db_path, sel_symbol, selected_date, days=250)
-            if daily.empty:
-                st.info("无 K 线数据")
-            else:
-                kt = st.radio("周期", ["日", "周", "月"], horizontal=True,
-                              key=f"tv_kperiod_{zone}")
-                kdf = daily if kt == "日" else _resample_ohlc(
-                    daily, "W-FRI" if kt == "周" else "ME")
-                st.plotly_chart(
-                    _candlestick(kdf, f"{sel_symbol} {title_name} · {kt}K（前复权）"),
-                    use_container_width=True)
+            if st.button(f"📈 看 {sel_symbol} {title_name} K线",
+                         key=f"tv_kbtn_{zone}", use_container_width=True):
+                _kline_dialog(con_id, db_path, sel_symbol, title_name, selected_date)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
