@@ -1215,10 +1215,10 @@ def render_turnover(con_id: int, db_path: str) -> None:
     pareto_v, knee_v, _tot, _cnt = compute_thresholds(vals)
 
     ktab = f"🔴 焦点龙头区（≥拐点{knee_v:.1f}亿）" if knee_v else "🔴 焦点龙头区（无拐点）"
-    tab_chart, tab_p, tab_k, tab_fix = st.tabs([
-        "对数分布（找门槛）",
+    tab_p, tab_k, tab_chart, tab_fix = st.tabs([
         f"🟠 资金主力区（≥{pareto_v:.1f}亿）",
         ktab,
+        "对数分布（找门槛）",
         "固定档位",
     ])
 
