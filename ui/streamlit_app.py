@@ -1304,11 +1304,20 @@ def render_turnover(con_id: int, db_path: str) -> None:
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
         st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 点击行查看 K 线")
         sel_symbol = None
+        tbl_key = f"tv_tbl_{zone}"
         try:  # Streamlit ≥1.35 支持表格点选
             ev = st.dataframe(pool_show, use_container_width=True, hide_index=True,
                               on_select="rerun", selection_mode="single-row",
-                              key=f"tv_tbl_{zone}")
-            rows = ev.selection.rows if ev and ev.selection else []
+                              key=tbl_key)
+            # 兼容属性/字典两种访问方式取选中行
+            rows = []
+            sel = getattr(ev, "selection", None) if ev is not None else None
+            if sel is None and isinstance(ev, dict):
+                sel = ev.get("selection")
+            if sel is not None:
+                rows = getattr(sel, "rows", None)
+                if rows is None and isinstance(sel, dict):
+                    rows = sel.get("rows", [])
             if rows:
                 sel_symbol = str(pool_show.iloc[rows[0]]["代码"])
         except TypeError:  # 旧版本不支持 on_select，回退
