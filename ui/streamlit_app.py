@@ -1302,7 +1302,8 @@ def render_turnover(con_id: int, db_path: str) -> None:
             return
         new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 点击行查看 K 线")
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）")
+        st.caption("👉 看K线：点每行**最左侧的圆圈**选中该股（点数据格不会选中）。")
         sel_symbol = None
         # 不用 hide_index（部分版本 hide_index 会使行点选失效）
         ev = st.dataframe(pool_show, use_container_width=True,
