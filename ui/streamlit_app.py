@@ -1348,13 +1348,13 @@ def render_turnover(con_id: int, db_path: str) -> None:
             else:
                 st.dataframe(exits, use_container_width=True, hide_index=True)
 
-        # ── 选中个股 → 弹窗看多周期 K 线 ──────────────────────────────
-        if sel_symbol:
+        # ── 选中个股 → 直接弹窗看多周期 K 线（每次新选中弹一次）─────────
+        shown_key = f"tv_shown_{zone}"
+        if sel_symbol and st.session_state.get(shown_key) != sel_symbol:
+            st.session_state[shown_key] = sel_symbol
             name = pool.loc[pool["代码"] == sel_symbol, "名称"]
             title_name = name.iloc[0] if len(name) else ""
-            if st.button(f"📈 看 {sel_symbol} {title_name} K线",
-                         key=f"tv_kbtn_{zone}", use_container_width=True):
-                _kline_dialog(con_id, db_path, sel_symbol, title_name, selected_date)
+            _kline_dialog(con_id, db_path, sel_symbol, title_name, selected_date)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
