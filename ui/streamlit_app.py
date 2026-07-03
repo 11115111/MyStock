@@ -1239,11 +1239,17 @@ def render_turnover(con_id: int, db_path: str) -> None:
         e1, e2 = st.columns(2)
         with e1:
             st.markdown(f"🆕 今日新进榜（{len(new_in)}）")
-            st.dataframe(new_in.drop(columns=["新进榜"]) if not new_in.empty else new_in,
-                         use_container_width=True, hide_index=True) if not new_in.empty else st.caption("无")
+            if new_in.empty:
+                st.caption("无")
+            else:
+                st.dataframe(new_in.drop(columns=["新进榜"]),
+                             use_container_width=True, hide_index=True)
         with e2:
             st.markdown(f"🚪 今日退榜（{len(exits)}）")
-            st.dataframe(exits, use_container_width=True, hide_index=True) if not exits.empty else st.caption("无")
+            if exits.empty:
+                st.caption("无")
+            else:
+                st.dataframe(exits, use_container_width=True, hide_index=True)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
