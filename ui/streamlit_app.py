@@ -1104,8 +1104,17 @@ def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> 
                 FROM active_pool_daily
                 WHERE zone = $2 AND trade_date IN (SELECT trade_date FROM win)
                 GROUP BY symbol
+            ),
+            ind AS (   -- 通达信二级行业
+                SELECT bm.stock_symbol AS symbol,
+                       STRING_AGG(i.block_name, ' / ' ORDER BY i.block_name) AS 二级行业
+                FROM raw_tdx_blocks_member bm
+                JOIN raw_tdx_blocks_info i ON i.block_code = bm.block_code
+                WHERE i.block_type = 'tdx_research' AND i.block_level = 2
+                GROUP BY bm.stock_symbol
             )
             SELECT p.symbol AS 代码, p.name AS 名称,
+                   ind.二级行业,
                    p.amount_yi AS 成交额亿,
                    p.rps50, p.rps120, p.rps250,
                    p.change_pct AS 涨跌幅, p.close_bfq AS 现价,
@@ -1115,6 +1124,7 @@ def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> 
                    (p.consecutive_days = 1) AS 新进榜
             FROM active_pool_daily p
             LEFT JOIN d60 ON d60.symbol = p.symbol
+            LEFT JOIN ind ON ind.symbol = p.symbol
             WHERE p.trade_date = $1 AND p.zone = $2
             ORDER BY p.amount_yi DESC
         """, [trade_date, zone]).df()
