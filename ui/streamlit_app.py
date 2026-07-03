@@ -1302,38 +1302,19 @@ def render_turnover(con_id: int, db_path: str) -> None:
             return
         new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 点击行查看 K 线")
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 勾选「K线」列查看")
         sel_symbol = None
-        tbl_key = f"tv_tbl_{zone}"
-
-        def _rows_from(obj):
-            """从 dataframe 选择事件/状态里取选中行索引，兼容多种结构。"""
-            if obj is None:
-                return []
-            sel = getattr(obj, "selection", None)
-            if sel is None and isinstance(obj, dict):
-                sel = obj.get("selection")
-            if sel is None:
-                return []
-            r = getattr(sel, "rows", None)
-            if r is None and isinstance(sel, dict):
-                r = sel.get("rows", [])
-            return list(r) if r else []
-
-        try:  # Streamlit ≥1.35 支持表格点选
-            ev = st.dataframe(pool_show, use_container_width=True, hide_index=True,
-                              on_select="rerun", selection_mode="single-row",
-                              key=tbl_key)
-            rows = _rows_from(ev) or _rows_from(st.session_state.get(tbl_key))
-            if rows:
-                sel_symbol = str(pool_show.iloc[rows[0]]["代码"])
-        except TypeError:  # 旧版本不支持 on_select，回退
-            st.dataframe(pool_show, use_container_width=True, hide_index=True)
-            st.session_state[f"tv_tbl_fallback_{zone}"] = True
-
-        with st.expander("🐞 点选调试（确认后可删）"):
-            st.write("session_state[key]:", st.session_state.get(tbl_key))
-            st.write("sel_symbol:", sel_symbol)
+        view = pool_show.copy()
+        view.insert(0, "K线", False)
+        edited = st.data_editor(
+            view, use_container_width=True, hide_index=True,
+            key=f"tv_edit_{zone}",
+            column_config={"K线": st.column_config.CheckboxColumn("K线", width="small")},
+            disabled=[c for c in view.columns if c != "K线"],
+        )
+        checked = edited.index[edited["K线"] == True].tolist()
+        if checked:
+            sel_symbol = str(pool_show.iloc[checked[-1]]["代码"])
         e1, e2 = st.columns(2)
         with e1:
             st.markdown(f"🆕 今日新进榜（{len(new_in)}）")
