@@ -1302,8 +1302,18 @@ def render_turnover(con_id: int, db_path: str) -> None:
             return
         new_in = pool[pool["新进榜"] == True] if not pool.empty else pool
         pool_show = pool.drop(columns=["新进榜"]) if not pool.empty else pool
-        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）")
-        st.dataframe(pool_show, use_container_width=True, hide_index=True)
+        st.markdown(f"在榜 {len(pool)} 只（新进榜 {len(new_in)}）· 点击行查看 K 线")
+        sel_symbol = None
+        try:  # Streamlit ≥1.35 支持表格点选
+            ev = st.dataframe(pool_show, use_container_width=True, hide_index=True,
+                              on_select="rerun", selection_mode="single-row",
+                              key=f"tv_tbl_{zone}")
+            rows = ev.selection.rows if ev and ev.selection else []
+            if rows:
+                sel_symbol = str(pool_show.iloc[rows[0]]["代码"])
+        except TypeError:  # 旧版本不支持 on_select，回退
+            st.dataframe(pool_show, use_container_width=True, hide_index=True)
+            st.session_state[f"tv_tbl_fallback_{zone}"] = True
         e1, e2 = st.columns(2)
         with e1:
             st.markdown(f"🆕 今日新进榜（{len(new_in)}）")
@@ -1322,11 +1332,17 @@ def render_turnover(con_id: int, db_path: str) -> None:
         # ── 选股看多周期 K 线 ─────────────────────────────────────────
         if not pool.empty:
             st.divider()
-            opts = [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
-            pick = st.selectbox("查看 K 线", ["（选择个股）"] + opts, key=f"tv_kline_{zone}")
-            if pick and not pick.startswith("（"):
-                sym = pick.split()[0]
-                daily = load_kline(con_id, db_path, sym, selected_date, days=250)
+            # 表格点选不可用时回退到下拉
+            if st.session_state.get(f"tv_tbl_fallback_{zone}") and sel_symbol is None:
+                opts = [f"{r['代码']} {r['名称']}" for _, r in pool.iterrows()]
+                pick = st.selectbox("查看 K 线", ["（选择个股）"] + opts, key=f"tv_kline_{zone}")
+                if pick and not pick.startswith("（"):
+                    sel_symbol = pick.split()[0]
+
+            if sel_symbol:
+                name = pool.loc[pool["代码"] == sel_symbol, "名称"]
+                title_name = name.iloc[0] if len(name) else ""
+                daily = load_kline(con_id, db_path, sel_symbol, selected_date, days=250)
                 if daily.empty:
                     st.info("无 K 线数据")
                 else:
@@ -1338,8 +1354,9 @@ def render_turnover(con_id: int, db_path: str) -> None:
                         kdf = _resample_ohlc(daily, "W-FRI")
                     else:
                         kdf = _resample_ohlc(daily, "ME")
-                    st.plotly_chart(_candlestick(kdf, f"{pick} · {kt}K（前复权）"),
-                                    use_container_width=True)
+                    st.plotly_chart(
+                        _candlestick(kdf, f"{sel_symbol} {title_name} · {kt}K（前复权）"),
+                        use_container_width=True)
 
     # ── 对数刻度直方图 + 各门槛竖线 ────────────────────────────────────
     with tab_chart:
