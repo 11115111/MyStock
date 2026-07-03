@@ -1079,15 +1079,28 @@ def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> 
     con = get_con(db_path)
     try:
         return con.execute("""
-            SELECT symbol AS 代码, name AS 名称,
-                   amount_yi AS 成交额亿,
-                   rps50, rps120, rps250,
-                   change_pct AS 涨跌幅, close_bfq AS 现价,
-                   consecutive_days AS 连续天数, join_date AS 本轮进榜,
-                   (consecutive_days = 1) AS 新进榜
-            FROM active_pool_daily
-            WHERE trade_date = $1 AND zone = $2
-            ORDER BY 成交额亿 DESC
+            WITH win AS (   -- 最近 60 个交易日
+                SELECT trade_date FROM active_threshold_daily
+                WHERE trade_date <= $1 ORDER BY trade_date DESC LIMIT 60
+            ),
+            d60 AS (
+                SELECT symbol, COUNT(*) AS days60
+                FROM active_pool_daily
+                WHERE zone = $2 AND trade_date IN (SELECT trade_date FROM win)
+                GROUP BY symbol
+            )
+            SELECT p.symbol AS 代码, p.name AS 名称,
+                   p.amount_yi AS 成交额亿,
+                   p.rps50, p.rps120, p.rps250,
+                   p.change_pct AS 涨跌幅, p.close_bfq AS 现价,
+                   p.consecutive_days AS 连续天数,
+                   COALESCE(d60.days60, 0) AS "60日在榜",
+                   p.join_date AS 本轮进榜,
+                   (p.consecutive_days = 1) AS 新进榜
+            FROM active_pool_daily p
+            LEFT JOIN d60 ON d60.symbol = p.symbol
+            WHERE p.trade_date = $1 AND p.zone = $2
+            ORDER BY p.amount_yi DESC
         """, [trade_date, zone]).df()
     except Exception:
         return pd.DataFrame()
@@ -1301,23 +1314,12 @@ def render_turnover(con_id: int, db_path: str) -> None:
             + (f" ｜ 拐点≈{knee_v:.2f}亿" if knee_v else "")
         )
 
-    # ── 资金主力区：即时清单 + 进退榜 ─────────────────────────────────
+    # ── 资金主力区：在榜 + 进退榜 ─────────────────────────────────────
     with tab_p:
-        dfp = load_active_stocks(con_id, db_path, selected_date, pareto_v)
-        st.markdown(f"**即时清单**（成交额 ≥ {pareto_v:.2f}亿，共 {len(dfp)} 只，约占全市场成交额一半）")
-        st.dataframe(dfp, use_container_width=True, hide_index=True)
-        st.divider()
         _render_pool_section("pareto")
 
-    # ── 焦点龙头区：即时清单 + 进退榜 ─────────────────────────────────
+    # ── 焦点龙头区：在榜 + 进退榜 ─────────────────────────────────────
     with tab_k:
-        if knee_v:
-            dfk = load_active_stocks(con_id, db_path, selected_date, knee_v)
-            st.markdown(f"**即时清单**（成交额 ≥ 拐点 {knee_v:.2f}亿，共 {len(dfk)} 只）")
-            st.dataframe(dfk, use_container_width=True, hide_index=True)
-        else:
-            st.info("当天未检出有效拐点")
-        st.divider()
         _render_pool_section("knee")
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
