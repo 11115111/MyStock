@@ -1161,6 +1161,13 @@ def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> 
                 WHERE zone = $2 AND trade_date IN (SELECT trade_date FROM win)
                 GROUP BY symbol
             ),
+            t60 AS (   -- 60日上榜次数：窗口内 consecutive_days=1 的进榜段数
+                SELECT symbol, COUNT(*) AS times60
+                FROM active_pool_daily
+                WHERE zone = $2 AND consecutive_days = 1
+                  AND trade_date IN (SELECT trade_date FROM win)
+                GROUP BY symbol
+            ),
             ind AS (   -- 通达信二级行业
                 SELECT bm.stock_symbol AS symbol,
                        STRING_AGG(i.block_name, ' / ' ORDER BY i.block_name) AS 二级行业
@@ -1176,10 +1183,12 @@ def load_active_pool(_con_id: int, db_path: str, trade_date: str, zone: str) -> 
                    p.change_pct AS 涨跌幅, p.close_bfq AS 现价,
                    p.consecutive_days AS 连续天数,
                    COALESCE(d60.days60, 0) AS "60日在榜",
+                   COALESCE(t60.times60, 0) AS "60日上榜次数",
                    p.join_date AS 本轮进榜,
                    (p.consecutive_days = 1) AS 新进榜
             FROM active_pool_daily p
             LEFT JOIN d60 ON d60.symbol = p.symbol
+            LEFT JOIN t60 ON t60.symbol = p.symbol
             LEFT JOIN ind ON ind.symbol = p.symbol
             WHERE p.trade_date = $1 AND p.zone = $2
             ORDER BY p.amount_yi DESC
