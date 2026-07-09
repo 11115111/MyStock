@@ -1305,8 +1305,18 @@ def render_turnover(con_id: int, db_path: str) -> None:
     m3.metric("拐点", f"{knee_v:.2f} 亿" if knee_v else "—")
     m4.metric("前10% 门槛 P90", f"{pcts[90]:.2f} 亿")
 
+    # 资金主力区固定门槛（配置）
+    import yaml
+    fixed_amt = 20.0
+    try:
+        _cfgp = Path(__file__).parent.parent / "config" / "thresholds.yaml"
+        fixed_amt = float(yaml.safe_load(open(_cfgp, encoding="utf-8"))
+                          .get("active_pool", {}).get("fixed_amt_yi", 20.0))
+    except Exception:
+        pass
+
     tab_p, tab_chart, tab_fix = st.tabs([
-        f"🟠 资金主力区（≥{pareto_v:.1f}亿）",
+        f"🟠 资金主力区（≥{fixed_amt:g}亿）",
         "对数分布（找门槛）",
         "固定档位",
     ])
@@ -1458,7 +1468,7 @@ def render_turnover(con_id: int, db_path: str) -> None:
 
     # ── 资金主力区：在榜 + 进退榜 ─────────────────────────────────────
     with tab_p:
-        _render_pool_section("pareto")
+        _render_pool_section("fixed")
 
     # ── 固定档位柱状图（参考）──────────────────────────────────────────
     with tab_fix:

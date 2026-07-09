@@ -70,6 +70,7 @@ def main(
     cfg = _load_cfg(Path(cfg_path))
     szh_cfg = cfg["sanxianhong"]
     max_member = cfg.get("block_rps", {}).get("max_member_count", 100)
+    active_fixed = cfg.get("active_pool", {}).get("fixed_amt_yi", 20.0)
 
     con = get_connection(db)
 
@@ -122,7 +123,7 @@ def main(
 
         try:
             click.echo(f"[活跃度门槛/在榜] history {start_date} → {end_date}")
-            n = calc_active_history(con, start_date, end_date)
+            n = calc_active_history(con, start_date, end_date, fixed_amt_yi=active_fixed)
             click.echo(f"  {n} rows into active_pool_daily")
         except Exception as e:
             import traceback
@@ -163,7 +164,7 @@ def main(
 
         try:
             click.echo(f"[活跃度门槛/在榜] {target_date}")
-            n = calc_active(con, target_date)
+            n = calc_active(con, target_date, fixed_amt_yi=active_fixed)
             click.echo(f"  {n} rows into active_pool_daily")
         except Exception as e:
             import traceback

@@ -92,14 +92,13 @@ _POOL_SQL = """
 INSERT OR REPLACE INTO active_pool_daily
 WITH td AS (
     SELECT trade_date, ROW_NUMBER() OVER (ORDER BY trade_date) AS idx
-    FROM (SELECT DISTINCT trade_date FROM active_threshold_daily)
+    FROM (SELECT DISTINCT date AS trade_date FROM raw_kline_daily)
 ),
-mem AS (
-    SELECT k.date AS trade_date, k.symbol, 'pareto' AS zone, k.amount / 1e8 AS amt
+mem AS (   -- 固定门槛：日成交额 >= $fixed 亿
+    SELECT k.date AS trade_date, k.symbol, 'fixed' AS zone, k.amount / 1e8 AS amt
     FROM raw_kline_daily k
     JOIN stock_pool sp ON sp.symbol = k.symbol
-    JOIN active_threshold_daily t ON t.trade_date = k.date
-    WHERE t.pareto_amt IS NOT NULL AND k.amount / 1e8 >= t.pareto_amt
+    WHERE k.amount / 1e8 >= $fixed
 ),
 joined AS (
     SELECT m.*, td.idx FROM mem m JOIN td ON td.trade_date = m.trade_date
@@ -131,10 +130,17 @@ WHERE r.trade_date BETWEEN $start AND $end
 """
 
 
-def calc_active_history(con: duckdb.DuckDBPyConnection, start: str, end: str) -> int:
-    """区间计算：先逐日算门槛，再一条 SQL 算在榜 + 连续天数。返回在榜行数。"""
-    _refresh_thresholds(con, start, end)
-    con.execute(_POOL_SQL, {"start": start, "end": end})
+def calc_active_history(con: duckdb.DuckDBPyConnection, start: str, end: str,
+                        fixed_amt_yi: float = 20.0) -> int:
+    """区间计算：固定门槛在榜 + 连续天数（一条 SQL）。同时刷新 Pareto/拐点门槛供图表。
+
+    榜单用固定门槛（进出榜标准确定，只反映个股自身）；
+    active_threshold_daily 仍算 Pareto/拐点，仅供对数分布图与拐点走势。
+    """
+    _refresh_thresholds(con, start, end)  # 图表用，与榜单解耦
+    con.execute("DELETE FROM active_pool_daily WHERE trade_date BETWEEN $s AND $e",
+                {"s": start, "e": end})
+    con.execute(_POOL_SQL, {"start": start, "end": end, "fixed": fixed_amt_yi})
     row = con.execute(
         "SELECT COUNT(*) FROM active_pool_daily WHERE trade_date BETWEEN $s AND $e",
         {"s": start, "e": end},
@@ -142,10 +148,12 @@ def calc_active_history(con: duckdb.DuckDBPyConnection, start: str, end: str) ->
     return row[0] if row else 0
 
 
-def calc_active(con: duckdb.DuckDBPyConnection, target_date: str) -> int:
-    """单日计算 = 区间子集。门槛只算当日，连续天数窗口扫全表。"""
+def calc_active(con: duckdb.DuckDBPyConnection, target_date: str,
+                fixed_amt_yi: float = 20.0) -> int:
+    """单日计算 = 区间子集。连续天数窗口扫全表。"""
     _refresh_thresholds(con, target_date, target_date)
-    con.execute(_POOL_SQL, {"start": target_date, "end": target_date})
+    con.execute("DELETE FROM active_pool_daily WHERE trade_date = $1", [target_date])
+    con.execute(_POOL_SQL, {"start": target_date, "end": target_date, "fixed": fixed_amt_yi})
     row = con.execute(
         "SELECT COUNT(*) FROM active_pool_daily WHERE trade_date = $1", [target_date]
     ).fetchone()
