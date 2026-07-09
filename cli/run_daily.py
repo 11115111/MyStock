@@ -53,6 +53,7 @@ def _load_cfg(path: Path) -> dict:
 @click.option("--skip-sanxianhong", is_flag=True, help="Skip 三线红 step")
 @click.option("--refresh-blocks", is_flag=True, help="Refresh stock_pool then exit")
 @click.option("--drop-tables", is_flag=True, help="Drop computed tables before --init-history (forces clean rebuild)")
+@click.option("--only-active", is_flag=True, help="Recompute only active_pool over history, then exit")
 def main(
     db: str,
     target_date: str | None,
@@ -63,6 +64,7 @@ def main(
     skip_sanxianhong: bool,
     refresh_blocks: bool,
     drop_tables: bool,
+    only_active: bool,
 ) -> None:
     if drop_tables and not init_history:
         raise click.UsageError("--drop-tables requires --init-history")
@@ -83,6 +85,20 @@ def main(
 
     if refresh_blocks:
         click.echo(f"[stock_pool] {refresh_stock_pool(con)} symbols")
+        con.close()
+        return
+
+    if only_active:
+        if not end_date:
+            row = con.execute("SELECT MAX(date) FROM raw_kline_daily").fetchone()
+            end_date = str(row[0]) if row and row[0] else target_date
+        if not start_date:
+            start_date = con.execute(
+                "SELECT (CAST($1 AS DATE) - INTERVAL '2 years')::VARCHAR", [end_date]
+            ).fetchone()[0]
+        click.echo(f"[活跃度门槛/在榜] recompute {start_date} → {end_date} (fixed={active_fixed}亿)")
+        n = calc_active_history(con, start_date, end_date, fixed_amt_yi=active_fixed)
+        click.echo(f"  {n} rows into active_pool_daily")
         con.close()
         return
 
