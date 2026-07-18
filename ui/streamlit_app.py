@@ -1722,7 +1722,8 @@ def render_data_mgmt(db_path: str) -> None:
 
     # 初始化历史内联二次确认
     if st.session_state.get("dm_confirm_rps_init") and not running:
-        st.warning("⚠️ 初始化历史会**重算并覆盖**本项目所有数据（RPS / 三线红 / 市场宽度），耗时较长。")
+        st.warning("⚠️ 初始化历史会**删除并重建**本项目所有计算表（RPS / 三线红 / 市场宽度 / 活跃度），"
+                   "彻底清零后全量重算，耗时较长。")
         rc1, rc2 = st.columns(2)
         if rc1.button("✅ 确认初始化历史", type="primary", use_container_width=True, key="dm_rps_init_ok"):
             st.session_state.pop("dm_confirm_rps_init", None)
@@ -1760,7 +1761,8 @@ def render_data_mgmt(db_path: str) -> None:
                 if _run_command([tdx_exe, "cron", "--dburi", dburi]):
                     st.markdown("**② 重算本项目数据**")
                     if task == "rps_init":
-                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db, "--init-history"],
+                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db,
+                                      "--init-history", "--drop-tables"],
                                      cwd=repo_root)
                     else:
                         _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
