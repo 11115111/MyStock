@@ -22,7 +22,7 @@ import duckdb
 # ---------------------------------------------------------------------------
 
 _SQL_BLOCK_DAILY_PCT_SINGLE = """
-INSERT OR REPLACE INTO block_daily_pct
+INSERT INTO block_daily_pct
 SELECT
     bd.date                                                                  AS trade_date,
     bm.block_code,
@@ -49,7 +49,7 @@ GROUP BY bd.date, bm.block_code, bi.block_name, bi.block_type
 """
 
 _SQL_BLOCK_DAILY_PCT_HISTORY = """
-INSERT OR REPLACE INTO block_daily_pct
+INSERT INTO block_daily_pct
 SELECT
     bd.date                                                                  AS trade_date,
     bm.block_code,
@@ -113,7 +113,7 @@ ranked AS (
     FROM block_returns r
     WHERE r.trade_date = $target_date
 )
-INSERT OR REPLACE INTO rps_block_daily
+INSERT INTO rps_block_daily
 SELECT
     r.trade_date, r.block_code, r.block_name, r.block_type,
     r.bkrps5, r.bkrps10, r.bkrps15, r.bkrps20, r.bkrps50,
@@ -155,7 +155,7 @@ ranked AS (
     FROM block_returns r
     WHERE r.trade_date BETWEEN $start_date AND $end_date
 )
-INSERT OR REPLACE INTO rps_block_daily
+INSERT INTO rps_block_daily
 SELECT
     r.trade_date, r.block_code, r.block_name, r.block_type,
     r.bkrps5, r.bkrps10, r.bkrps15, r.bkrps20, r.bkrps50,
@@ -206,7 +206,7 @@ smoothed AS (
             ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)                  AS high_low_index_ma10
     FROM indexed i
 )
-INSERT OR REPLACE INTO block_breadth_daily
+INSERT INTO block_breadth_daily
 SELECT
     trade_date, block_code, block_name, block_type,
     member_count, new_high_count, new_low_count,
@@ -279,7 +279,7 @@ ranked AS (
     WHERE r.pct_5d IS NOT NULL
       AND {date_filter}
 )
-INSERT OR REPLACE INTO rps_stock_daily
+INSERT INTO rps_stock_daily
 SELECT
     r.date    AS trade_date,
     r.symbol,
@@ -315,6 +315,7 @@ def calc_block_daily_pct(con: duckdb.DuckDBPyConnection, target_date: str) -> in
 
     Must be called before calc_block_rps for the same date.
     """
+    con.execute("DELETE FROM block_daily_pct WHERE trade_date = $1", [target_date])
     con.execute(_SQL_BLOCK_DAILY_PCT_SINGLE, {"target_date": target_date})
     row = con.execute(
         "SELECT COUNT(*) FROM block_daily_pct WHERE trade_date = $1", [target_date]
@@ -326,6 +327,7 @@ def calc_block_daily_pct_history(
     con: duckdb.DuckDBPyConnection, start_date: str, end_date: str
 ) -> int:
     """Bulk compute and cache block daily returns for a date range."""
+    con.execute("DELETE FROM block_daily_pct WHERE trade_date BETWEEN $1 AND $2", [start_date, end_date])
     con.execute(_SQL_BLOCK_DAILY_PCT_HISTORY, {"start_date": start_date, "end_date": end_date})
     row = con.execute(
         "SELECT COUNT(*) FROM block_daily_pct WHERE trade_date BETWEEN $1 AND $2",
@@ -335,6 +337,7 @@ def calc_block_daily_pct_history(
 
 
 def calc_stock_rps(con: duckdb.DuckDBPyConnection, target_date: str) -> int:
+    con.execute("DELETE FROM rps_stock_daily WHERE trade_date = $1", [target_date])
     con.execute(_SQL_STOCK_RPS_SINGLE, {"target_date": target_date})
     row = con.execute(
         "SELECT COUNT(*) FROM rps_stock_daily WHERE trade_date = $1", [target_date]
@@ -345,6 +348,7 @@ def calc_stock_rps(con: duckdb.DuckDBPyConnection, target_date: str) -> int:
 def calc_stock_rps_history(
     con: duckdb.DuckDBPyConnection, start_date: str, end_date: str
 ) -> int:
+    con.execute("DELETE FROM rps_stock_daily WHERE trade_date BETWEEN $1 AND $2", [start_date, end_date])
     con.execute(_SQL_STOCK_RPS_HISTORY, {"start_date": start_date, "end_date": end_date})
     row = con.execute(
         "SELECT COUNT(*) FROM rps_stock_daily WHERE trade_date BETWEEN $1 AND $2",
@@ -358,6 +362,7 @@ def calc_block_rps(
     target_date: str,
     max_member_count: int = _DEFAULT_MAX_MEMBER,
 ) -> int:
+    con.execute("DELETE FROM rps_block_daily WHERE trade_date = $1", [target_date])
     con.execute(_SQL_BLOCK_RPS_SINGLE, {"target_date": target_date, "max_member_count": max_member_count})
     row = con.execute(
         "SELECT COUNT(*) FROM rps_block_daily WHERE trade_date = $1", [target_date]
@@ -371,6 +376,7 @@ def calc_block_rps_history(
     end_date: str,
     max_member_count: int = _DEFAULT_MAX_MEMBER,
 ) -> int:
+    con.execute("DELETE FROM rps_block_daily WHERE trade_date BETWEEN $1 AND $2", [start_date, end_date])
     con.execute(_SQL_BLOCK_RPS_HISTORY, {
         "start_date": start_date,
         "end_date": end_date,
@@ -388,6 +394,7 @@ def calc_block_breadth(con: duckdb.DuckDBPyConnection, target_date: str) -> int:
 
     high_low_index_ma10 needs the prior 9 trading days present in rps_stock_daily.
     """
+    con.execute("DELETE FROM block_breadth_daily WHERE trade_date = $1", [target_date])
     con.execute(_SQL_BLOCK_BREADTH_SINGLE, {"target_date": target_date})
     row = con.execute(
         "SELECT COUNT(*) FROM block_breadth_daily WHERE trade_date = $1", [target_date]
@@ -399,6 +406,7 @@ def calc_block_breadth_history(
     con: duckdb.DuckDBPyConnection, start_date: str, end_date: str
 ) -> int:
     """Bulk compute block market breadth for a date range."""
+    con.execute("DELETE FROM block_breadth_daily WHERE trade_date BETWEEN $1 AND $2", [start_date, end_date])
     con.execute(_SQL_BLOCK_BREADTH_HISTORY, {"start_date": start_date, "end_date": end_date})
     row = con.execute(
         "SELECT COUNT(*) FROM block_breadth_daily WHERE trade_date BETWEEN $1 AND $2",
