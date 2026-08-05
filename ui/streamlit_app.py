@@ -1496,6 +1496,21 @@ def render_turnover(con_id: int, db_path: str) -> None:
 # 数据管理：tdx2db 初始化/更新 + 本项目数据初始化/刷新
 # ---------------------------------------------------------------------------
 
+def _cli_cmd(py: str, repo_root: str, *args: str) -> list[str]:
+    """构造运行 cli.run_daily 的命令。
+
+    便携版嵌入式 Python 存在 ._pth 时进入隔离模式：忽略 PYTHONPATH，
+    `-m` 也不把 cwd 加进 sys.path，导致 `python -m cli.run_daily` 报
+    No module named 'cli'。这里改用 -c 在运行时显式插入 repo_root 到
+    sys.path 再调用 CLI，与 ._pth/PYTHONPATH 无关，最稳。
+    """
+    boot = (
+        "import sys; sys.path.insert(0, r'%s'); "
+        "from cli.run_daily import main; main()" % repo_root
+    )
+    return [py, "-c", boot, *args]
+
+
 def _run_command(cmd: list[str], cwd: str | None = None) -> bool:
     """运行命令并把输出实时打到 UI。返回是否成功。"""
     import subprocess
@@ -1770,11 +1785,11 @@ def render_data_mgmt(db_path: str) -> None:
                 if _run_command([tdx_exe, "cron", "--dburi", dburi]):
                     st.markdown("**② 重算本项目数据**")
                     if task == "rps_init":
-                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db,
-                                      "--init-history", "--drop-tables"],
+                        _run_command(_cli_cmd(py, repo_root, "--db", cur_db,
+                                              "--init-history", "--drop-tables"),
                                      cwd=repo_root)
                     else:
-                        _run_command([py, "-m", "cli.run_daily", "--db", cur_db], cwd=repo_root)
+                        _run_command(_cli_cmd(py, repo_root, "--db", cur_db), cwd=repo_root)
                 else:
                     st.error("行情更新失败，已中止本项目数据计算。")
         finally:
