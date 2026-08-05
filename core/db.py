@@ -5,7 +5,13 @@ _SQL_CREATE = (Path(__file__).parent.parent / "sql" / "01_create_tables.sql").re
 
 
 def get_connection(db_path: str) -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(db_path)
+    con = duckdb.connect(db_path)
+    # 关掉 DuckDB 查询进度条：捕获 stdout 时它按 \r 刷新会变成刷屏的多行输出
+    try:
+        con.execute("SET enable_progress_bar=false")
+    except Exception:
+        pass
+    return con
 
 
 def init_tables(con: duckdb.DuckDBPyConnection) -> None:
