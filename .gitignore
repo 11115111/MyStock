@@ -2,6 +2,9 @@ tdx2db
 datatool
 datatool.exe
 .tmp
+data/
+*.duckdb
+*.db
 
 # Python
 __pycache__/

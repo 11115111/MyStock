@@ -10,12 +10,13 @@ SELECT
     b.close,
     b.turnover,
     CASE
-        WHEN b.symbol LIKE '688%' AND b.change_pct >= 19.5 THEN '科创涨停'
-        WHEN b.symbol LIKE '3%'   AND b.change_pct >= 19.5 THEN '创业涨停'
-        WHEN b.symbol NOT LIKE '688%'
-         AND b.symbol NOT LIKE '3%'
-         AND b.symbol NOT LIKE '8%'
-         AND b.change_pct >= 9.7                            THEN '主板涨停'
+        WHEN RIGHT(b.symbol,6) LIKE '9%'
+            AND b.close >= ROUND(b.close / (1 + b.change_pct/100) * 1.3,  2) THEN '北交涨停'
+        WHEN (RIGHT(b.symbol,6) LIKE '688%' OR RIGHT(b.symbol,6) LIKE '3%')
+            AND b.close >= ROUND(b.close / (1 + b.change_pct/100) * 1.2,  2) THEN '科创/创业涨停'
+        WHEN n.name LIKE '%ST%'
+            AND b.close >= ROUND(b.close / (1 + b.change_pct/100) * 1.05, 2) THEN 'ST涨停'
+        WHEN b.close >= ROUND(b.close / (1 + b.change_pct/100) * 1.1,  2)    THEN '主板涨停'
         ELSE NULL
     END AS limit_status
 FROM raw_basic_daily b

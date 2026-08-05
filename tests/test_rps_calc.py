@@ -8,7 +8,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from core.db import init_tables, refresh_block_member_count, refresh_stock_pool
+from core.db import init_tables, refresh_stock_pool
 from core.rps_calculator import (
     calc_block_daily_pct,
     calc_stock_rps,
@@ -88,7 +88,6 @@ def _seed_data(c: duckdb.DuckDBPyConnection) -> None:
         c.execute(f"INSERT INTO raw_tdx_blocks_member VALUES ('{s}', 'BK002')")
 
     # Populate static caches that queries depend on
-    refresh_block_member_count(c)
     refresh_stock_pool(c)
 
     # Create the views that the calculator reads from

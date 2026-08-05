@@ -14,3 +14,5 @@ block_rps:
   required_count: 3
   preferred_block_type: '概念'
   max_member_count: 100   # 成员超过此数的板块视为过宽泛，排除出 RPS 排名
+active_pool:
+  fixed_amt_yi: 20        # 资金主力区固定门槛（亿）：日成交额 >= 此值即在榜
