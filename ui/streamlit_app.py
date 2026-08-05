@@ -1499,12 +1499,20 @@ def _run_command(cmd: list[str], cwd: str | None = None) -> bool:
     """运行命令并把输出实时打到 UI。返回是否成功。"""
     import subprocess
 
+    # 便携版嵌入式 Python 的 ._pth 会隔离 sys.path、不含当前目录，
+    # 于是 `python -m cli.run_daily` 即使 cwd=仓库根也 import 不到 cli。
+    # 显式把 cwd 注入 PYTHONPATH 兜底，保证子进程能导入项目包。
+    env = None
+    if cwd:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = cwd + os.pathsep + env.get("PYTHONPATH", "")
+
     st.code(" ".join(cmd), language="bash")
     placeholder = st.empty()
     lines: list[str] = []
     try:
         proc = subprocess.Popen(
-            cmd, cwd=cwd,
+            cmd, cwd=cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
         )
