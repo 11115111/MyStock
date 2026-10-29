@@ -418,7 +418,9 @@ def calc_block_breadth_history(
 
 # ---------------------------------------------------------------------------
 # Step 1d: market_trin_daily — Arms Index (TRIN) for the whole A-share market
-#   TRIN = (adv_count / dec_count) / (adv_volume / dec_volume)
+#   TRIN = (adv_count / dec_count) / (adv_amount / dec_amount)
+#   A股用成交额而非成交量：股价从几元到上千元，股数会放大低价股权重。
+#   trin_vol 保留经典成交量口径仅供参考。
 #   reads raw_basic_daily (change_pct) + raw_kline_daily (volume/amount),
 #   restricted to stock_pool and excluding suspended stocks (volume = 0).
 # ---------------------------------------------------------------------------
@@ -461,9 +463,9 @@ ratios AS (
         a.*,
         a.adv_count * 1.0 / NULLIF(a.dec_count, 0)                     AS ad_ratio,
         (a.adv_count * 1.0 / NULLIF(a.dec_count, 0))
-            / NULLIF(a.adv_volume / NULLIF(a.dec_volume, 0), 0)        AS trin,
+            / NULLIF(a.adv_amount / NULLIF(a.dec_amount, 0), 0)        AS trin,
         (a.adv_count * 1.0 / NULLIF(a.dec_count, 0))
-            / NULLIF(a.adv_amount / NULLIF(a.dec_amount, 0), 0)        AS trin_amt
+            / NULLIF(a.adv_volume / NULLIF(a.dec_volume, 0), 0)        AS trin_vol
     FROM agg a
 ),
 smoothed AS (
@@ -471,8 +473,8 @@ smoothed AS (
         r.*,
         AVG(r.trin) OVER w                                             AS trin_ma10,
         (SUM(r.adv_count) OVER w * 1.0 / NULLIF(SUM(r.dec_count) OVER w, 0))
-            / NULLIF(SUM(r.adv_volume) OVER w
-                     / NULLIF(SUM(r.dec_volume) OVER w, 0), 0)         AS trin_open10
+            / NULLIF(SUM(r.adv_amount) OVER w
+                     / NULLIF(SUM(r.dec_amount) OVER w, 0), 0)         AS trin_open10
     FROM ratios r
     WINDOW w AS (PARTITION BY r.market ORDER BY r.trade_date
                  ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)
@@ -482,7 +484,7 @@ SELECT
     trade_date, market,
     adv_count, dec_count, flat_count,
     adv_volume, dec_volume, adv_amount, dec_amount,
-    ad_ratio, trin, trin_amt, trin_ma10, trin_open10
+    ad_ratio, trin, trin_vol, trin_ma10, trin_open10
 FROM smoothed
 WHERE trade_date BETWEEN CAST($start_date AS DATE) AND CAST($end_date AS DATE)
 """

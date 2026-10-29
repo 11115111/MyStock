@@ -312,7 +312,7 @@ def load_trin_series(_con_id: int, db_path: str, market: str, end_date: str, n_d
                 flat_count                 AS 平盘家数,
                 ROUND(ad_ratio, 3)         AS 涨跌比,
                 ROUND(trin, 3)             AS TRIN,
-                ROUND(trin_amt, 3)         AS "TRIN(成交额)",
+                ROUND(trin_vol, 3)         AS "TRIN(成交量)",
                 ROUND(trin_ma10, 3)        AS "TRIN MA10",
                 ROUND(trin_open10, 3)      AS "Open-10 TRIN"
             FROM market_trin_daily
@@ -720,10 +720,11 @@ def _render_trin(con_id: int, db_path: str, selected_date: str) -> None:
     m1.metric("TRIN", _fmt(last["TRIN"]), _delta("TRIN"), delta_color="inverse")
     m2.metric("TRIN MA10", _fmt(last["TRIN MA10"]), _delta("TRIN MA10"), delta_color="inverse")
     m3.metric("Open-10 TRIN", _fmt(last["Open-10 TRIN"]), _delta("Open-10 TRIN"), delta_color="inverse")
-    m4.metric("TRIN(成交额)", _fmt(last["TRIN(成交额)"]), _delta("TRIN(成交额)"), delta_color="inverse")
+    m4.metric("TRIN(成交量)", _fmt(last["TRIN(成交量)"]), _delta("TRIN(成交量)"), delta_color="inverse")
     m5.metric("涨 / 跌 / 平", f"{int(last['上涨家数'])} / {int(last['下跌家数'])} / {int(last['平盘家数'])}")
     st.caption(
-        f"数据日期 {str(last['日期'])[:10]}。TRIN = (上涨家数/下跌家数) ÷ (上涨成交量/下跌成交量)。"
+        f"数据日期 {str(last['日期'])[:10]}。TRIN = (上涨家数/下跌家数) ÷ (上涨成交额/下跌成交额)，"
+        "A股股价差异大，用成交额而非成交量（股数）；成交量口径仅供参考。"
         "≈1 多空均衡；<1 资金集中流入上涨股（买方强）；>1 资金集中流向下跌股（卖方强）。"
         "单日 >2 常见于恐慌抛售（超卖），<0.5 常见于普涨亢奋（超买）；趋势判断看 MA10 / Open-10。"
     )

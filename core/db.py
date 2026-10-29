@@ -15,6 +15,14 @@ def get_connection(db_path: str) -> duckdb.DuckDBPyConnection:
 
 
 def init_tables(con: duckdb.DuckDBPyConnection) -> None:
+    # 旧版 market_trin_daily 以成交量为主口径（含 trin_amt 列），口径已改为成交额：
+    # 派生表直接删除重建，需重跑 --init-history 或 --only-trin 回填
+    old = con.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'market_trin_daily' AND column_name = 'trin_amt'"
+    ).fetchone()
+    if old:
+        con.execute("DROP TABLE market_trin_daily")
     for stmt in _SQL_CREATE.split(";"):
         stmt = stmt.strip()
         if stmt:

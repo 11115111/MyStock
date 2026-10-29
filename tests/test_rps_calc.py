@@ -327,23 +327,23 @@ def test_sanxianhong_daily_matches_history():
 
 
 def test_market_trin_formula(con):
-    """TRIN = (adv/dec) / (adv_vol/dec_vol); synthetic data: 2 up, 1 flat, 2 down."""
+    """TRIN = (adv/dec) / (adv_amt/dec_amt); synthetic data: 2 up, 1 flat, 2 down."""
     target = "2023-06-01"
-    # 让下跌股成交量翻倍：TRIN = (2/2) / (2e5 / 4e5) = 2.0
-    con.execute(
-        "UPDATE raw_kline_daily SET volume = 200000 WHERE date = ? AND symbol IN ('000001', '000002')",
-        [target],
-    )
+    # 上涨股成交额各 1e8、下跌股各 2e8：TRIN = (2/2) / (2e8 / 4e8) = 2.0
+    # 成交量反向设置（上涨股量大），确认主口径不受股数影响：trin_vol = (2/2) / (4e5 / 2e5) = 0.5
+    con.execute("UPDATE raw_kline_daily SET amount = 1e8, volume = 200000 WHERE date = ? AND symbol IN ('000004', '000005')", [target])
+    con.execute("UPDATE raw_kline_daily SET amount = 2e8, volume = 100000 WHERE date = ? AND symbol IN ('000001', '000002')", [target])
     n = calc_market_trin(con, target)
     assert n == 2, "Expected ALL + SZ rows (all synthetic symbols are 0xxxxx)"
     row = con.execute(
-        "SELECT adv_count, dec_count, flat_count, ad_ratio, trin FROM market_trin_daily "
+        "SELECT adv_count, dec_count, flat_count, ad_ratio, trin, trin_vol FROM market_trin_daily "
         "WHERE trade_date = ? AND market = 'ALL'", [target],
     ).fetchone()
-    adv, dec, flat, ad_ratio, trin = row
+    adv, dec, flat, ad_ratio, trin, trin_vol = row
     assert (adv, dec, flat) == (2, 2, 1)
     assert ad_ratio == pytest.approx(1.0)
     assert trin == pytest.approx(2.0)
+    assert trin_vol == pytest.approx(0.5)
 
 
 def test_market_trin_single_equals_history(con):

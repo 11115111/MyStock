@@ -128,13 +128,15 @@ grouped AS (
 `calc_market_trin_history()`，表 `market_trin_daily`，按 `market`（ALL/SH/SZ/BJ）分行：
 
 ```
-TRIN        = (上涨家数 / 下跌家数) / (上涨成交量 / 下跌成交量)
-trin_amt    = 同上，成交量换成成交额（A股低价股成交量偏大，此口径更稳健）
-trin_open10 = (Σ10日上涨家数 / Σ下跌家数) / (Σ上涨量 / Σ下跌量)
+TRIN        = (上涨家数 / 下跌家数) / (上涨成交额 / 下跌成交额)   -- 主口径
+trin_vol    = 同上，成交额换成成交量（经典美股定义，仅供参考）
+trin_open10 = (Σ10日上涨家数 / Σ下跌家数) / (Σ上涨成交额 / Σ下跌成交额)
 ```
 - 数据：`raw_basic_daily.change_pct` + `raw_kline_daily.volume/amount`，限 `stock_pool`，排除停牌（volume = 0）
 - 不依赖 `rps_stock_daily`；回看 30 自然日算 MA10/Open-10，单日 = 区间子集
+- 用成交额而非成交量：A股股价从几元到上千元，股数会放大低价股权重
 - <1 买方强，>1 卖方强；单日 >2 超卖、<0.5 超买
+- 只重算 TRIN：`--only-trin [--start --end]`
 
 ## 已修复的重要 Bug
 
