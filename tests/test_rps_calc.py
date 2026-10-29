@@ -13,8 +13,6 @@ from core.rps_calculator import (
     calc_block_daily_pct,
     calc_stock_rps,
     calc_block_rps,
-    calc_market_trin,
-    calc_market_trin_history,
 )
 from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
 
@@ -324,37 +322,3 @@ def test_sanxianhong_daily_matches_history():
     daily = _szh_rows(c)
 
     assert hist.equals(daily)
-
-
-def test_market_trin_formula(con):
-    """TRIN = (adv/dec) / (adv_vol/dec_vol); synthetic data: 2 up, 1 flat, 2 down."""
-    target = "2023-06-01"
-    # 让下跌股成交量翻倍：TRIN = (2/2) / (2e5 / 4e5) = 2.0
-    con.execute(
-        "UPDATE raw_kline_daily SET volume = 200000 WHERE date = ? AND symbol IN ('000001', '000002')",
-        [target],
-    )
-    n = calc_market_trin(con, target)
-    assert n == 2, "Expected ALL + SZ rows (all synthetic symbols are 0xxxxx)"
-    row = con.execute(
-        "SELECT adv_count, dec_count, flat_count, ad_ratio, trin FROM market_trin_daily "
-        "WHERE trade_date = ? AND market = 'ALL'", [target],
-    ).fetchone()
-    adv, dec, flat, ad_ratio, trin = row
-    assert (adv, dec, flat) == (2, 2, 1)
-    assert ad_ratio == pytest.approx(1.0)
-    assert trin == pytest.approx(2.0)
-
-
-def test_market_trin_single_equals_history(con):
-    """Single-date result must match the same date from a history run."""
-    target = "2023-06-01"
-    calc_market_trin(con, target)
-    single = con.execute(
-        "SELECT * FROM market_trin_daily WHERE trade_date = ? ORDER BY market", [target]
-    ).fetchall()
-    calc_market_trin_history(con, "2023-05-01", "2023-06-30")
-    hist = con.execute(
-        "SELECT * FROM market_trin_daily WHERE trade_date = ? ORDER BY market", [target]
-    ).fetchall()
-    assert single == hist

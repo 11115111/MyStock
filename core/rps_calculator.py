@@ -12,8 +12,6 @@ Data flow:
     rps_block_daily     ← calc_block_rps() / calc_block_rps_history()
     block_breadth_daily ← calc_block_breadth() / calc_block_breadth_history()
                           (reads per-stock flags from rps_stock_daily, run after it)
-    market_trin_daily   ← calc_market_trin() / calc_market_trin_history()
-                          (全市场 TRIN / 阿姆斯指标，直接读 raw 表)
 """
 from __future__ import annotations
 
@@ -415,96 +413,3 @@ def calc_block_breadth_history(
         [start_date, end_date],
     ).fetchone()
     return row[0] if row else 0
-
-# ---------------------------------------------------------------------------
-# Step 1d: market_trin_daily — Arms Index (TRIN) for the whole A-share market
-#   TRIN = (adv_count / dec_count) / (adv_volume / dec_volume)
-#   reads raw_basic_daily (change_pct) + raw_kline_daily (volume/amount),
-#   restricted to stock_pool and excluding suspended stocks (volume = 0).
-# ---------------------------------------------------------------------------
-
-_SQL_MARKET_TRIN = """
-WITH base AS (
-    SELECT
-        b.date                                                         AS trade_date,
-        CASE WHEN RIGHT(b.symbol, 6) LIKE '6%' THEN 'SH'
-             WHEN RIGHT(b.symbol, 6) LIKE '0%'
-               OR RIGHT(b.symbol, 6) LIKE '3%' THEN 'SZ'
-             ELSE 'BJ' END                                             AS exch,
-        b.change_pct,
-        k.volume,
-        k.amount
-    FROM raw_basic_daily  b
-    JOIN stock_pool       sp ON sp.symbol = b.symbol
-    JOIN raw_kline_daily  k  ON k.symbol = b.symbol AND k.date = b.date
-    -- 回看 30 个自然日：MA10 / Open-10 需要前 9 个交易日，足够覆盖长假
-    WHERE b.date BETWEEN CAST($start_date AS DATE) - INTERVAL 30 DAY AND CAST($end_date AS DATE)
-      AND k.volume > 0
-      AND b.change_pct IS NOT NULL
-),
-agg AS (
-    SELECT
-        trade_date,
-        COALESCE(exch, 'ALL')                                          AS market,
-        SUM(CASE WHEN change_pct > 0 THEN 1 ELSE 0 END)                AS adv_count,
-        SUM(CASE WHEN change_pct < 0 THEN 1 ELSE 0 END)                AS dec_count,
-        SUM(CASE WHEN change_pct = 0 THEN 1 ELSE 0 END)                AS flat_count,
-        SUM(CASE WHEN change_pct > 0 THEN volume ELSE 0 END)           AS adv_volume,
-        SUM(CASE WHEN change_pct < 0 THEN volume ELSE 0 END)           AS dec_volume,
-        SUM(CASE WHEN change_pct > 0 THEN amount ELSE 0 END)           AS adv_amount,
-        SUM(CASE WHEN change_pct < 0 THEN amount ELSE 0 END)           AS dec_amount
-    FROM base
-    GROUP BY GROUPING SETS ((trade_date, exch), (trade_date))
-),
-ratios AS (
-    SELECT
-        a.*,
-        a.adv_count * 1.0 / NULLIF(a.dec_count, 0)                     AS ad_ratio,
-        (a.adv_count * 1.0 / NULLIF(a.dec_count, 0))
-            / NULLIF(a.adv_volume / NULLIF(a.dec_volume, 0), 0)        AS trin,
-        (a.adv_count * 1.0 / NULLIF(a.dec_count, 0))
-            / NULLIF(a.adv_amount / NULLIF(a.dec_amount, 0), 0)        AS trin_amt
-    FROM agg a
-),
-smoothed AS (
-    SELECT
-        r.*,
-        AVG(r.trin) OVER w                                             AS trin_ma10,
-        (SUM(r.adv_count) OVER w * 1.0 / NULLIF(SUM(r.dec_count) OVER w, 0))
-            / NULLIF(SUM(r.adv_volume) OVER w
-                     / NULLIF(SUM(r.dec_volume) OVER w, 0), 0)         AS trin_open10
-    FROM ratios r
-    WINDOW w AS (PARTITION BY r.market ORDER BY r.trade_date
-                 ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)
-)
-INSERT INTO market_trin_daily
-SELECT
-    trade_date, market,
-    adv_count, dec_count, flat_count,
-    adv_volume, dec_volume, adv_amount, dec_amount,
-    ad_ratio, trin, trin_amt, trin_ma10, trin_open10
-FROM smoothed
-WHERE trade_date BETWEEN CAST($start_date AS DATE) AND CAST($end_date AS DATE)
-"""
-
-
-def calc_market_trin_history(
-    con: duckdb.DuckDBPyConnection, start_date: str, end_date: str
-) -> int:
-    """Compute market TRIN (ALL / SH / SZ / BJ) for a date range.
-
-    Independent of rps_stock_daily; MA10 / Open-10 use a 30-calendar-day lookback
-    from raw tables, so single-date and history runs give identical results.
-    """
-    con.execute("DELETE FROM market_trin_daily WHERE trade_date BETWEEN $1 AND $2", [start_date, end_date])
-    con.execute(_SQL_MARKET_TRIN, {"start_date": start_date, "end_date": end_date})
-    row = con.execute(
-        "SELECT COUNT(*) FROM market_trin_daily WHERE trade_date BETWEEN $1 AND $2",
-        [start_date, end_date],
-    ).fetchone()
-    return row[0] if row else 0
-
-
-def calc_market_trin(con: duckdb.DuckDBPyConnection, target_date: str) -> int:
-    """Compute market TRIN for one date (subset of the history calculation)."""
-    return calc_market_trin_history(con, target_date, target_date)

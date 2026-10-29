@@ -3,7 +3,6 @@
 模块：
     📈 三线红榜单   — sanxianhong_daily 榜单 / 新上榜 / 退榜
     🌡️ 市场宽度     — block_breadth_daily 按通达信二级行业的 NH-NL / High-Low Index / MA20 宽度
-                      + market_trin_daily 全市场 TRIN（阿姆斯指标）
 
 Run from repo root:
     streamlit run rps/ui/streamlit_app.py -- --db /path/to/your.duckdb
@@ -295,31 +294,6 @@ def load_breadth_series(_con_id: int, db_path: str, block_name: str) -> pd.DataF
             WHERE i.block_name = $1 AND {_L2_FILTER}
             ORDER BY b.trade_date
         """, [block_name]).df()
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def load_trin_series(_con_id: int, db_path: str, market: str, end_date: str, n_days: int = 120) -> pd.DataFrame:
-    """全市场 / 分市场 TRIN 时间序列（截至 end_date 的最近 n_days 个交易日）。"""
-    con = get_con(db_path)
-    try:
-        return con.execute(f"""
-            SELECT
-                trade_date                 AS 日期,
-                adv_count                  AS 上涨家数,
-                dec_count                  AS 下跌家数,
-                flat_count                 AS 平盘家数,
-                ROUND(ad_ratio, 3)         AS 涨跌比,
-                ROUND(trin, 3)             AS TRIN,
-                ROUND(trin_amt, 3)         AS "TRIN(成交额)",
-                ROUND(trin_ma10, 3)        AS "TRIN MA10",
-                ROUND(trin_open10, 3)      AS "Open-10 TRIN"
-            FROM market_trin_daily
-            WHERE market = $1 AND trade_date <= $2
-            ORDER BY trade_date DESC
-            LIMIT {int(n_days)}
-        """, [market, end_date]).df().sort_values("日期")
     except Exception:
         return pd.DataFrame()
 
@@ -691,53 +665,6 @@ def render_sanxianhong(con_id: int, db_path: str) -> None:
 # Module: 市场宽度（通达信二级行业）
 # ---------------------------------------------------------------------------
 
-def _render_trin(con_id: int, db_path: str, selected_date: str) -> None:
-    """全市场 TRIN（阿姆斯指标）概览 + 走势。"""
-    st.divider()
-    st.subheader("TRIN（阿姆斯指标）")
-    _mkt_map = {"全A": "ALL", "沪市": "SH", "深市": "SZ", "北交所": "BJ"}
-    tc1, tc2 = st.columns([2, 3])
-    mkt_label = tc1.radio("市场", list(_mkt_map), horizontal=True, key="trin_mkt")
-    n_days = tc2.slider("走势天数", 20, 250, 120, step=10, key="trin_days")
-    trin = load_trin_series(con_id, db_path, _mkt_map[mkt_label], selected_date, n_days)
-    if trin.empty:
-        st.info("market_trin_daily 暂无数据，请先运行每日更新或 `--init-history`")
-        return
-
-    last = trin.iloc[-1]
-    prev = trin.iloc[-2] if len(trin) > 1 else None
-
-    def _fmt(v) -> str:
-        return "—" if pd.isna(v) else f"{v:.2f}"
-
-    def _delta(col: str):
-        if prev is None or pd.isna(last[col]) or pd.isna(prev[col]):
-            return None
-        return f"{last[col] - prev[col]:+.2f}"
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    # TRIN 越低越强：delta 颜色反转
-    m1.metric("TRIN", _fmt(last["TRIN"]), _delta("TRIN"), delta_color="inverse")
-    m2.metric("TRIN MA10", _fmt(last["TRIN MA10"]), _delta("TRIN MA10"), delta_color="inverse")
-    m3.metric("Open-10 TRIN", _fmt(last["Open-10 TRIN"]), _delta("Open-10 TRIN"), delta_color="inverse")
-    m4.metric("TRIN(成交额)", _fmt(last["TRIN(成交额)"]), _delta("TRIN(成交额)"), delta_color="inverse")
-    m5.metric("涨 / 跌 / 平", f"{int(last['上涨家数'])} / {int(last['下跌家数'])} / {int(last['平盘家数'])}")
-    st.caption(
-        f"数据日期 {str(last['日期'])[:10]}。TRIN = (上涨家数/下跌家数) ÷ (上涨成交量/下跌成交量)。"
-        "≈1 多空均衡；<1 资金集中流入上涨股（买方强）；>1 资金集中流向下跌股（卖方强）。"
-        "单日 >2 常见于恐慌抛售（超卖），<0.5 常见于普涨亢奋（超买）；趋势判断看 MA10 / Open-10。"
-    )
-
-    chart = trin.set_index("日期")
-    cc1, cc2 = st.columns(2)
-    with cc1:
-        st.caption("TRIN / MA10 / Open-10（1 为多空分界）")
-        st.line_chart(chart[["TRIN", "TRIN MA10", "Open-10 TRIN"]], height=300)
-    with cc2:
-        st.caption("涨跌比（上涨家数 / 下跌家数）")
-        st.bar_chart(chart[["涨跌比"]], height=300)
-
-
 def render_breadth(con_id: int, db_path: str) -> None:
     import datetime
     import streamlit.components.v1 as components
@@ -789,8 +716,6 @@ def render_breadth(con_id: int, db_path: str) -> None:
     m4.metric("全市场 NH-NL", total_nh - total_nl)
     m5.metric("全市场 MA20 宽度", f"{mkt_ma20:.1f}%")
     st.caption(f"全市场 High-Low Index ≈ {mkt_hl:.1f}")
-
-    _render_trin(con_id, db_path, selected_date)
 
     st.divider()
 
