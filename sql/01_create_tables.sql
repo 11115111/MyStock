@@ -49,6 +49,26 @@ CREATE TABLE IF NOT EXISTS block_breadth_daily (
     PRIMARY KEY (trade_date, block_code)
 );
 
+-- 全市场 TRIN（阿姆斯指标 Arms Index）：(上涨家数/下跌家数) / (上涨量/下跌量)
+-- market: ALL=全A / SH=沪市 / SZ=深市 / BJ=北交所；<1 买方占优，>1 卖方占优
+CREATE TABLE IF NOT EXISTS market_trin_daily (
+    trade_date   DATE    NOT NULL,
+    market       VARCHAR NOT NULL,
+    adv_count    INTEGER,   -- 上涨家数（change_pct > 0）
+    dec_count    INTEGER,   -- 下跌家数（change_pct < 0）
+    flat_count   INTEGER,   -- 平盘家数
+    adv_volume   DOUBLE,    -- 上涨股成交量合计
+    dec_volume   DOUBLE,    -- 下跌股成交量合计
+    adv_amount   DOUBLE,    -- 上涨股成交额合计
+    dec_amount   DOUBLE,    -- 下跌股成交额合计
+    ad_ratio     DOUBLE,    -- 涨跌家数比 adv / dec
+    trin         DOUBLE,    -- TRIN（成交量口径，经典定义）
+    trin_amt     DOUBLE,    -- TRIN（成交额口径，A股量价差异大时更稳健）
+    trin_ma10    DOUBLE,    -- TRIN 10 日均值
+    trin_open10  DOUBLE,    -- Open-10 TRIN：10 日累计家数/累计量 再求比值
+    PRIMARY KEY (trade_date, market)
+);
+
 CREATE TABLE IF NOT EXISTS rps_block_daily (
     trade_date DATE NOT NULL,
     block_code VARCHAR NOT NULL,

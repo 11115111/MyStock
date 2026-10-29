@@ -30,6 +30,8 @@ from core.rps_calculator import (
     calc_block_rps_history,
     calc_block_breadth,
     calc_block_breadth_history,
+    calc_market_trin,
+    calc_market_trin_history,
 )
 from core.sanxianhong import calc_sanxianhong, calc_sanxianhong_history
 from core.active_pool import calc_active, calc_active_history
@@ -77,7 +79,7 @@ def main(
     con = get_connection(db)
 
     if drop_tables:
-        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "block_breadth_daily", "sanxianhong_daily", "active_threshold_daily", "active_pool_daily"):
+        for tbl in ("block_daily_pct", "rps_stock_daily", "rps_block_daily", "block_breadth_daily", "market_trin_daily", "sanxianhong_daily", "active_threshold_daily", "active_pool_daily"):
             con.execute(f"DROP TABLE IF EXISTS {tbl}")
             click.echo(f"[drop] {tbl}")
 
@@ -131,6 +133,10 @@ def main(
         n = calc_block_breadth_history(con, start_date, end_date)
         click.echo(f"  {n} rows into block_breadth_daily")
 
+        click.echo(f"[market TRIN] history {start_date} → {end_date}")
+        n = calc_market_trin_history(con, start_date, end_date)
+        click.echo(f"  {n} rows into market_trin_daily")
+
         if not skip_sanxianhong:
             versions = list(szh_cfg.keys())
             click.echo(f"[三线红] history {start_date} → {end_date} versions={versions}")
@@ -170,6 +176,10 @@ def main(
 
         click.echo(f"[block breadth] {target_date}")
         n = calc_block_breadth(con, target_date)
+        click.echo(f"  {n} rows")
+
+        click.echo(f"[market TRIN] {target_date}")
+        n = calc_market_trin(con, target_date)
         click.echo(f"  {n} rows")
 
         if not skip_sanxianhong:
