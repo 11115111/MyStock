@@ -89,6 +89,7 @@ python -m cli.run_daily --db /path/to/your.duckdb --only-active
 | `rps_stock_daily` | 个股每日 RPS（5/10/20/50/120/250 周期），各周期独立排名 |
 | `rps_block_daily` | 板块每日 RPS（5/10/15/20/50 周期） |
 | `block_breadth_daily` | 板块市场宽度（NH-NL、High-Low Index、MA20 宽度） |
+| `market_trin_daily` | 全市场 TRIN / 阿姆斯指标（全A/沪/深/北，含成交额口径、MA10、Open-10） |
 | `sanxianhong_daily` | 三线红榜单（strict + loose），含连续天数、60日在榜等 |
 | `active_threshold_daily` | 每日成交额分布门槛（Pareto50% / 拐点，供分布图与走势） |
 | `active_pool_daily` | 资金主力区在榜个股（固定门槛），含连续天数、60日在榜、上榜次数、进退榜 |
